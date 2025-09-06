@@ -10,10 +10,21 @@ This is a **dotfiles repository** that uses **GNU Stow** for symlink management.
 
 - **`home/`** - Contains all dotfiles that mirror the `$HOME` directory structure
 - **`bootstrap.py`** - Modern Python-based bootstrap script with enhanced features
+- **`brewfile.py`** - Source for the brewfile utility (deployed by bootstrap)
 - **`bootstrap.sh`** - Legacy Bash bootstrap script
 - **`Brewfile`** + **`Brewfile.extra`** - Homebrew package management via Bundle
-- **`home/.local/bin/brewfile`** - Modern Python-based Brewfile manager with interactive features
+- **`home/.local/bin/brewfile`** - Modern Python-based Brewfile manager (deployed from brewfile.py)
 - **`home/.local/bin/brewfile.sh`** - Legacy Bash version (deprecated)
+
+## Bootstrap Process
+
+The bootstrap script follows a logical three-step process for setting up a new machine:
+
+1. **Install Homebrew** (macOS only) - Ensures package manager is available
+2. **Sync Brewfile packages** - Installs all dependencies including GNU Stow
+3. **Apply dotfiles** - Uses Stow to create symlinks to your configurations
+
+This sequence ensures all dependencies are met before attempting to apply dotfiles.
 
 ## Common Commands
 
@@ -139,6 +150,11 @@ Shell configurations are modular:
 1. Install normally: `brew install <package>`
 2. Update Brewfile: `brewfile dump --include extra` (appends to Brewfile.extra)
 3. Or for main packages: `brewfile dump` (appends to main Brewfile)
+
+### When Modifying Brewfile Utility
+1. Edit the source file: `brewfile.py` in the repository root
+2. Test changes by running `python3 brewfile.py <command>`
+3. Deploy to dotfiles: `./bootstrap.py` will copy `brewfile.py` → `home/.local/bin/brewfile`
 
 ### System Maintenance
 - Use `brewfile cleanup --include extra` regularly to identify unused packages

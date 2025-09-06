@@ -215,15 +215,115 @@ class DotfilesBootstrap:
         
         return success
 
+    def _check_brew_installed(self):
+        """Checks if Homebrew is installed."""
+        return shutil.which("brew") is not None
+
+    def _install_brew(self):
+        """Installs Homebrew on macOS."""
+        if self._check_brew_installed():
+            say("Homebrew is already installed.")
+            return True
+
+        if self.os_type != "macos":
+            return True  # Not needed on non-macOS systems
+
+        say("Installing Homebrew...")
+        try:
+            # Use the official Homebrew install script
+            install_script = '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
+            result = subprocess.run(install_script, shell=True, check=True)
+            
+            # Add brew to PATH for this session
+            brew_paths = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"]
+            for brew_path in brew_paths:
+                if Path(brew_path).exists():
+                    os.environ["PATH"] = f"{Path(brew_path).parent}:{os.environ['PATH']}"
+                    break
+            
+            success("Homebrew installed successfully.")
+            return True
+            
+        except subprocess.CalledProcessError as e:
+            error(f"Failed to install Homebrew: {e}")
+            return False
+
+    def _deploy_brewfile_utility(self):
+        """Deploys brewfile.py to home/.local/bin/brewfile with proper shebang."""
+        source_brewfile = self.repo_dir / "brewfile.py"
+        target_dir = self.repo_dir / "home" / ".local" / "bin"
+        target_brewfile = target_dir / "brewfile"
+        
+        if not source_brewfile.exists():
+            warn("brewfile.py not found in repository root. Skipping deployment.")
+            return True
+        
+        say("Deploying brewfile utility...")
+        try:
+            # Ensure target directory exists
+            target_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Copy the file
+            shutil.copy2(source_brewfile, target_brewfile)
+            
+            # Make it executable
+            target_brewfile.chmod(0o755)
+            
+            success(f"Deployed brewfile utility to {target_brewfile}")
+            return True
+            
+        except OSError as e:
+            error(f"Failed to deploy brewfile utility: {e}")
+            return False
+
+    def _sync_brewfile_packages(self):
+        """Syncs packages from Brewfile using the deployed brewfile utility."""
+        # First deploy the utility
+        if not self._deploy_brewfile_utility():
+            return False
+            
+        brewfile_script = self.repo_dir / "home" / ".local" / "bin" / "brewfile"
+        
+        say("Syncing packages from Brewfile...")
+        try:
+            # Run brewfile install with extra packages
+            result = subprocess.run(
+                ["python3", str(brewfile_script), "install", "--include", "extra"],
+                cwd=self.repo_dir,
+                check=True
+            )
+            success("Brewfile packages synced successfully.")
+            return True
+            
+        except subprocess.CalledProcessError as e:
+            error(f"Failed to sync Brewfile packages: {e}")
+            return False
+        except FileNotFoundError:
+            error("Python3 not found. Cannot run brewfile utility.")
+            return False
+
     def bootstrap(self, target="~", preview_only=False, adopt=False):
         """Main bootstrap function."""
         say("Starting dotfiles bootstrap...")
         
-        # Install stow if needed
-        if not self._install_stow():
-            die("Cannot proceed without GNU Stow")
+        # Step 1: Install Homebrew (macOS only)
+        if self.os_type == "macos":
+            if not self._install_brew():
+                die("Cannot proceed without Homebrew on macOS")
         
-        # Expand and resolve target path
+        # Step 2: Sync Brewfile packages (includes stow)
+        if self.os_type == "macos":
+            if not self._sync_brewfile_packages():
+                warn("Failed to sync Brewfile packages. Continuing with manual stow installation.")
+                # Fall back to manual stow installation
+                if not self._install_stow():
+                    die("Cannot proceed without GNU Stow")
+        else:
+            # Non-macOS: install stow directly
+            if not self._install_stow():
+                die("Cannot proceed without GNU Stow")
+        
+        # Step 3: Apply dotfiles with stow
         target_path = Path(target).expanduser().resolve()
         
         if preview_only:

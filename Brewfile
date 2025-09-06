@@ -1,5 +1,4 @@
 tap "homebrew/autoupdate"
-tap "homebrew/services"
 
 brew "uv"
 brew "python@3.13"
