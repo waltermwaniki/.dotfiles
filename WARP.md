@@ -31,38 +31,50 @@ This sequence ensures all dependencies are met before attempting to apply dotfil
 
 ### Initial Setup
 ```bash
-# Clone and bootstrap the entire dotfiles setup
+# Clone and bootstrap the entire development environment
 git clone <repo-url> "$HOME/.dotfiles"
 cd "$HOME/.dotfiles"
-./bootstrap.py
+./bootstrap.py setup
 ```
 
-### Dotfiles Management
+### Complete System Setup
 ```bash
-# Preview changes before applying
-./bootstrap.py --preview
+# Full setup (packages + dotfiles)
+./bootstrap.py setup                # Complete setup
+./bootstrap.py setup --preview      # Preview all operations
+./bootstrap.py setup --skip-packages  # Only dotfiles
+./bootstrap.py setup --skip-dotfiles   # Only packages
+./bootstrap.py setup --adopt        # Adopt existing files
+```
 
-# Apply dotfiles (create symlinks)
-./bootstrap.py
+### Individual Components
+```bash
+# Package management only
+./bootstrap.py packages             # Install all packages
+./bootstrap.py packages --preview   # Preview package operations
 
-# Re-apply after making changes
-./bootstrap.py --restow
-# or use stow directly
-stow -Rvt "$HOME" home
+# Dotfiles management only
+./bootstrap.py dotfiles             # Apply dotfiles
+./bootstrap.py dotfiles --preview   # Preview dotfiles operations
+./bootstrap.py dotfiles --restow    # Re-apply after changes
+./bootstrap.py dotfiles --adopt     # Adopt existing files
 
-# Adopt existing files into the repo (CAREFUL)
-./bootstrap.py --adopt
+# Utility deployment
+./bootstrap.py deploy               # Deploy brewfile + dotfiles utilities
+
+# System status
+./bootstrap.py status               # Show current bootstrap state
 ```
 
 ### Package Management
 
-Use the modern `brewfile` Python utility for all package management:
+Use the deployed `brewfile` utility for package management:
 
 ```bash
 brewfile install                    # Install all packages
 brewfile install --include extra    # Include Brewfile.extra
-brewfile list                       # List dependencies with install status
-brewfile list --include extra       # Include extra files
+brewfile status                     # Show dependencies with install status
+brewfile status --include extra     # Include extra files
 brewfile sync                       # Install + cleanup in one command
 brewfile dump                       # Update Brewfile from system (append)
 brewfile dump --force               # Overwrite Brewfile completely
@@ -71,6 +83,16 @@ brewfile add <package>              # Install and add package to Brewfile
 brewfile add <package> --to extra   # Add to Brewfile.extra
 brewfile remove <package>           # Interactive removal from Brewfile
 brewfile edit                       # Open Brewfile in $EDITOR
+```
+
+### Dotfiles Management
+
+Use the deployed `dotfiles` utility for quick dotfiles operations:
+
+```bash
+dotfiles status                     # Show dotfiles status
+dotfiles restow                     # Re-apply from remembered location
+dotfiles conflicts                  # Check for stow conflicts
 ```
 
 ### Shell Environment
@@ -115,7 +137,7 @@ The repository includes a sophisticated Brewfile management system:
 ### Recommended Workflows
 ```bash
 # Daily workflow
-brewfile list --include extra       # Check status of all packages
+brewfile status --include extra     # Check status of all packages
 brewfile sync --include extra       # Install missing + remove unused
 
 # Adding new packages

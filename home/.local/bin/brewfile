@@ -294,8 +294,8 @@ class BrewfileManager:
                         f.write("")
         say("Dump complete.")
 
-    def cmd_list(self, args):
-        """Lists all dependencies from the main Brewfile and any included files,
+    def cmd_status(self, args):
+        """Shows status of all dependencies from the main Brewfile and any included files,
         showing their installation status and grouping them."""
         self._ensure_brew()
 
@@ -549,9 +549,9 @@ def main():
         dest="command", required=True, help="Available commands"
     )
     commands = {
-        "install": "Install all dependencies from the Brewfile(s) (formerly 'sync').",
+        "install": "Install all dependencies from the Brewfile(s).",
         "cleanup": "Preview or apply removals of unlisted packages.",
-        "list": "List all dependencies from Brewfile(s) and compare with system state.",
+        "status": "Show status of all dependencies from Brewfile(s) and compare with system state.",
         "sync": "Run 'install' then 'cleanup' to fully synchronize the system.",
         "dump": "Update Brewfile from current system.",
         "edit": "Open Brewfile in $EDITOR.",
