@@ -148,19 +148,26 @@ class BaseBootstrap(ABC):
         try:
             result = subprocess.run(cmd, cwd=self.repo_dir, capture_output=True, text=True)
             
-            if "cannot stow" in result.stderr.lower():
+            # Check both stdout and stderr for conflicts (stow outputs to stdout)
+            output_text = (result.stdout + result.stderr).lower()
+            
+            if "cannot stow" in output_text:
                 say(f"Creating backup directory: {backup_dir}")
                 backup_dir.mkdir(parents=True, exist_ok=True)
                 
-                # Parse conflicts and backup files
-                conflicts = self._parse_stow_conflicts(result.stderr)
+                # Parse conflicts and backup files (check both outputs)
+                all_output = result.stdout + result.stderr
+                conflicts = self._parse_stow_conflicts(all_output)
                 for conflict_file in conflicts:
                     source_file = target_path / conflict_file
                     if source_file.exists() and source_file.is_file():
                         backup_file = backup_dir / conflict_file
                         backup_file.parent.mkdir(parents=True, exist_ok=True)
+                        # Copy the file to backup
                         shutil.copy2(source_file, backup_file)
-                        say(f"Backed up: {conflict_file}")
+                        # Remove the original to avoid conflict
+                        source_file.unlink()
+                        say(f"Backed up and removed: {conflict_file}")
                 
                 return True
             return True
@@ -169,17 +176,19 @@ class BaseBootstrap(ABC):
             error(f"Failed to check for conflicts: {e}")
             return False
 
-    def _parse_stow_conflicts(self, stderr_output):
-        """Parse stow error output to find conflicting files."""
+    def _parse_stow_conflicts(self, output):
+        """Parse stow output to find conflicting files."""
         conflicts = []
-        for line in stderr_output.split('\n'):
+        for line in output.split('\n'):
             if "cannot stow" in line and "existing target" in line:
                 # Extract filename from error message
-                # Format: "cannot stow X over existing target Y"
+                # Format: "cannot stow .dotfiles/home/.gitconfig over existing target .gitconfig"
                 parts = line.split()
                 for i, part in enumerate(parts):
                     if part == "target" and i + 1 < len(parts):
                         conflict_file = parts[i + 1]
+                        # Remove any trailing punctuation
+                        conflict_file = conflict_file.rstrip('.,;:')
                         if conflict_file not in conflicts:
                             conflicts.append(conflict_file)
                         break
@@ -236,12 +245,12 @@ class BaseBootstrap(ABC):
         if adopt:
             args.append("--adopt")
         
-        success = self._run_stow_command(args, target_path)
+        result = self._run_stow_command(args, target_path)
         
-        if success:
+        if result:
             say("Preview completed. No changes were made.")
         
-        return success
+        return result
 
     def apply(self, target, adopt=False):
         """Apply the dotfiles using stow."""
@@ -260,9 +269,9 @@ class BaseBootstrap(ABC):
             args.append("--adopt")
             warn("Using --adopt mode. Existing files will be moved into the repository!")
         
-        success = self._run_stow_command(args, target_path)
+        result = self._run_stow_command(args, target_path)
         
-        if success:
+        if result:
             # Update state
             state = self._load_state()
             state["target_directory"] = str(target_path)
@@ -272,7 +281,7 @@ class BaseBootstrap(ABC):
             success("Dotfiles applied successfully!")
             say("You may need to restart your shell or source your RC files to see changes.")
         
-        return success
+        return result
 
     def restow(self, target):
         """Re-apply dotfiles after making changes."""
@@ -282,12 +291,12 @@ class BaseBootstrap(ABC):
         
         args = ["-R", "-v"]  # -R for restow, -v for verbose
         
-        success = self._run_stow_command(args, target_path)
+        result = self._run_stow_command(args, target_path)
         
-        if success:
+        if result:
             success("Dotfiles re-applied successfully!")
         
-        return success
+        return result
 
     @abstractmethod
     def deploy_package_manager_utility(self):
@@ -649,6 +658,216 @@ if __name__ == "__main__":
         return shutil.which("brew") is not None
 
 
+class LinuxBootstrap(BaseBootstrap):
+    """Linux-specific bootstrap implementation for Ubuntu and Rocky Linux."""
+
+    def install_package_manager_and_stow(self, preview_only=False):
+        """Install package manager (already available) and GNU Stow."""
+        # Package manager is already installed on Linux systems
+        pkg_manager = self._detect_package_manager()
+        say(f"Using {pkg_manager} package manager.")
+        
+        # Always ensure Stow is available (even in preview mode)
+        if not self._check_stow_installed():
+            if preview_only:
+                say("Preview: Would install GNU Stow (required for dotfiles preview)")
+                say("Installing GNU Stow (required for preview)...")
+            else:
+                say("Installing GNU Stow...")
+            
+            try:
+                if pkg_manager == "apt":
+                    subprocess.run(["sudo", "apt", "update"], check=True)
+                    subprocess.run(["sudo", "apt", "install", "-y", "stow"], check=True)
+                elif pkg_manager in ["dnf", "yum"]:
+                    subprocess.run(["sudo", pkg_manager, "install", "-y", "stow"], check=True)
+                
+                success("GNU Stow installed successfully.")
+            except subprocess.CalledProcessError as e:
+                error(f"Failed to install GNU Stow: {e}")
+                return False
+        else:
+            say("GNU Stow is already available.")
+        
+        return True
+
+    def deploy_package_manager_utility(self):
+        """Deploy the aptfile utility for Linux package management."""
+        source_aptfile = self.repo_dir / "aptfile.py"
+        target_dir = self.repo_dir / "home" / ".local" / "bin"
+        target_aptfile = target_dir / "aptfile"
+        
+        if not source_aptfile.exists():
+            warn("aptfile.py not found in repository root. Skipping deployment.")
+            return True
+        
+        say("Deploying aptfile utility...")
+        try:
+            # Ensure target directory exists
+            target_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Copy the file
+            shutil.copy2(source_aptfile, target_aptfile)
+            
+            # Make it executable
+            target_aptfile.chmod(0o755)
+            
+            success(f"Deployed aptfile utility to {target_aptfile}")
+            return True
+            
+        except OSError as e:
+            error(f"Failed to deploy aptfile utility: {e}")
+            return False
+
+    def install_packages(self, preview_only=False):
+        """Install all packages from Aptfile/Dnffile using the aptfile utility."""
+        aptfile_script = self.repo_dir / "home" / ".local" / "bin" / "aptfile"
+        
+        if preview_only:
+            say("Checking package status from package files...")
+            try:
+                # Use aptfile status to show current state
+                result = subprocess.run(
+                    ["python3", str(aptfile_script), "status"],
+                    cwd=self.repo_dir,
+                    capture_output=True,
+                    text=True,
+                    check=True
+                )
+                print(result.stdout)
+                say("Preview: Missing packages would be installed during setup")
+                return True
+            except subprocess.CalledProcessError as e:
+                # Fallback to basic preview
+                pkg_manager = self._detect_package_manager()
+                pkg_file = "Aptfile" if pkg_manager == "apt" else "Dnffile"
+                say(f"Preview: Would install packages from {pkg_file}")
+                return True
+        
+        say("Installing packages from package files...")
+        try:
+            # Run aptfile install
+            subprocess.run(
+                ["python3", str(aptfile_script), "install"],
+                cwd=self.repo_dir,
+                check=True
+            )
+            
+            # Verify stow is now available
+            if not self._check_stow_installed():
+                error("GNU Stow was not installed despite package installation.")
+                return False
+                
+            success("All packages installed successfully.")
+            return True
+            
+        except subprocess.CalledProcessError as e:
+            error(f"Failed to install packages: {e}")
+            return False
+        except FileNotFoundError:
+            error("Python3 not found. Cannot run aptfile utility.")
+            return False
+
+    def deploy_stow_utility(self):
+        """Deploy the dotfiles management utility."""
+        # Same implementation as DarwinBootstrap - the dotfiles utility is platform-agnostic
+        stow_utility_content = '''#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Dotfiles management utility - deployed by bootstrap.py"""
+
+import argparse
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+def load_bootstrap_state():
+    """Load bootstrap state to get target directory."""
+    state_file = Path.cwd() / ".bootstrap.state.json"
+    if state_file.exists():
+        try:
+            with open(state_file, 'r') as f:
+                return json.load(f)
+        except:
+            pass
+    return {}
+
+def main():
+    parser = argparse.ArgumentParser(description="Manage dotfiles with stow")
+    parser.add_argument("action", choices=["status", "restow", "conflicts"], help="Action to perform")
+    args = parser.parse_args()
+    
+    state = load_bootstrap_state()
+    target = state.get("target_directory", Path.home())
+    
+    if args.action == "status":
+        print(f"Dotfiles target: {target}")
+        print(f"Last stow: {state.get('last_stow', 'Never')}")
+    elif args.action == "restow":
+        print(f"Re-applying dotfiles to {target}")
+        result = subprocess.run(["stow", "-Rvt", str(target), "home"])
+        sys.exit(result.returncode)
+    elif args.action == "conflicts":
+        print("Checking for conflicts...")
+        result = subprocess.run(["stow", "-nvt", str(target), "home"], capture_output=True, text=True)
+        if "cannot stow" in result.stderr:
+            print("Conflicts found:")
+            print(result.stderr)
+        else:
+            print("No conflicts detected.")
+
+if __name__ == "__main__":
+    main()
+'''
+        
+        target_dir = self.repo_dir / "home" / ".local" / "bin"
+        target_file = target_dir / "dotfiles"
+        
+        say("Deploying dotfiles utility...")
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+            with open(target_file, 'w') as f:
+                f.write(stow_utility_content)
+            target_file.chmod(0o755)
+            success(f"Deployed dotfiles utility to {target_file}")
+            return True
+        except OSError as e:
+            error(f"Failed to deploy dotfiles utility: {e}")
+            return False
+
+    def get_system_status(self):
+        """Get Linux-specific system status."""
+        status = {}
+        
+        # Check package manager
+        pkg_manager = self._detect_package_manager()
+        status[f"Package Manager ({pkg_manager})"] = "Available"
+        
+        # Check Stow
+        status["GNU Stow Available"] = "Yes" if self._check_stow_installed() else "No"
+        
+        # Check aptfile utility
+        aptfile_path = self.repo_dir / "home" / ".local" / "bin" / "aptfile"
+        status["Aptfile Utility"] = "Yes" if aptfile_path.exists() else "No"
+        
+        # Check dotfiles utility
+        dotfiles_path = self.repo_dir / "home" / ".local" / "bin" / "dotfiles"
+        status["Dotfiles Utility"] = "Yes" if dotfiles_path.exists() else "No"
+        
+        return status
+
+    def _detect_package_manager(self):
+        """Detect available Linux package manager."""
+        if shutil.which("apt"):
+            return "apt"
+        elif shutil.which("dnf"):
+            return "dnf"
+        elif shutil.which("yum"):
+            return "yum"
+        else:
+            die("No supported package manager found (apt, dnf, yum)")
+
+
 def main():
     """Main function and argument parser."""
     parser = argparse.ArgumentParser(
@@ -743,8 +962,10 @@ def main():
     system = platform.system().lower()
     if system == "darwin":
         bootstrap = DarwinBootstrap()
+    elif system == "linux":
+        bootstrap = LinuxBootstrap()
     else:
-        die(f"Unsupported platform: {system}. Currently only Darwin/macOS is supported.")
+        die(f"Unsupported platform: {system}. Currently only Darwin/macOS and Linux are supported.")
     
     try:
         success = False

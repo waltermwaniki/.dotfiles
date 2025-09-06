@@ -1,0 +1,34 @@
+# DNF packages for Rocky Linux/RHEL/Fedora systems
+# Core development tools
+git
+curl
+wget
+gcc
+gcc-c++
+make
+python3
+python3-pip
+nodejs
+npm
+
+# Shell and terminal tools  
+zsh
+tmux
+fzf
+ripgrep
+fd-find
+bat
+tree
+stow
+
+# Text editors and development
+neovim
+vim
+
+# Additional development tools
+jq
+htop
+unzip
+
+# EPEL repository (for Rocky Linux)
+# Run: dnf install epel-release

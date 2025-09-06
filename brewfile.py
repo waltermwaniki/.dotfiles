@@ -161,6 +161,11 @@ class BrewfileManager:
     def cmd_cleanup(self, args):
         """Cleans up unlisted dependencies after a preview and confirmation."""
         self._ensure_brew()
+        
+        # Default to --all for cleanup unless user specifically chose otherwise
+        if not args.all and not args.include:
+            args.all = True
+        
         with self._get_merged_brewfile_path(args) as merged_file_path:
             file_basenames = [
                 p.name for p in [self.brewfile] + self._resolve_include_files(args)
@@ -207,6 +212,11 @@ class BrewfileManager:
 
     def cmd_sync(self, args):
         """Runs 'install' then 'cleanup' to fully synchronize the system."""
+        
+        # Default to --all for sync unless user specifically chose otherwise
+        if not args.all and not args.include:
+            args.all = True
+            
         say("-- Running 'install' step --")
         self.cmd_install(args)
         say("-- Running 'cleanup' step --")

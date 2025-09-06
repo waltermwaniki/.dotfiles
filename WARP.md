@@ -4,24 +4,27 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 ## Repository Overview
 
-This is a **dotfiles repository** that uses **GNU Stow** for symlink management. It provides a unified approach to managing shell configurations, application settings, and development environment setup across macOS and Linux systems.
+This is a **dotfiles repository** that uses **GNU Stow** for symlink management. It provides a unified approach to managing shell configurations, application settings, and development environment setup across **macOS and Linux systems**.
 
 ### Architecture
 
 - **`home/`** - Contains all dotfiles that mirror the `$HOME` directory structure
 - **`bootstrap.py`** - Modern Python-based bootstrap script with enhanced features
-- **`brewfile.py`** - Source for the brewfile utility (deployed by bootstrap)
+- **`brewfile.py`** - Source for the brewfile utility (deployed by bootstrap on macOS)
+- **`aptfile.py`** - Source for the aptfile utility (deployed by bootstrap on Linux)
 - **`bootstrap.sh`** - Legacy Bash bootstrap script
-- **`Brewfile`** + **`Brewfile.extra`** - Homebrew package management via Bundle
-- **`home/.local/bin/brewfile`** - Modern Python-based Brewfile manager (deployed from brewfile.py)
+- **`Brewfile`** + **`Brewfile.extra`** - Homebrew package management via Bundle (macOS)
+- **`Aptfile`** + **`Dnffile`** - Linux package management for Ubuntu and Rocky Linux
+- **`home/.local/bin/brewfile`** - Modern Python-based Brewfile manager (macOS)
+- **`home/.local/bin/aptfile`** - Modern Python-based Linux package manager (Linux)
 - **`home/.local/bin/brewfile.sh`** - Legacy Bash version (deprecated)
 
 ## Bootstrap Process
 
 The bootstrap script follows a logical four-step process for setting up a new machine:
 
-1. **Install package manager** (Homebrew on macOS) - Ensures package manager is available
-2. **Deploy package management utility** - Copies `brewfile.py` to `home/.local/bin/brewfile`
+1. **Install package manager** (Homebrew on macOS, apt/dnf on Linux) - Ensures package manager is available
+2. **Deploy package management utility** - Copies platform-specific utility (`brewfile.py` or `aptfile.py`)
 3. **Install packages** - Uses the deployed utility to install all dependencies including GNU Stow
 4. **Apply dotfiles** - Uses Stow to create symlinks to your configurations
 
@@ -68,6 +71,7 @@ cd "$HOME/.dotfiles"
 
 ### Package Management
 
+#### macOS (Homebrew)
 Use the deployed `brewfile` utility for package management:
 
 ```bash
@@ -75,14 +79,26 @@ brewfile install                    # Install all packages
 brewfile install --include extra    # Include Brewfile.extra
 brewfile status                     # Show dependencies with install status
 brewfile status --include extra     # Include extra files
-brewfile sync                       # Install + cleanup in one command
+brewfile sync                       # Install + cleanup in one command (includes extra by default)
 brewfile dump                       # Update Brewfile from system (append)
 brewfile dump --force               # Overwrite Brewfile completely
-brewfile cleanup                    # Interactive cleanup of unused packages
+brewfile cleanup                    # Interactive cleanup of unused packages (includes extra by default)
 brewfile add <package>              # Install and add package to Brewfile
 brewfile add <package> --to extra   # Add to Brewfile.extra
 brewfile remove <package>           # Interactive removal from Brewfile
 brewfile edit                       # Open Brewfile in $EDITOR
+```
+
+#### Linux (apt/dnf/yum)
+Use the deployed `aptfile` utility for package management:
+
+```bash
+aptfile install                     # Install all packages from Aptfile/Dnffile
+aptfile status                      # Show package installation status
+aptfile add <package>               # Install and add package to package file
+aptfile remove <package>            # Interactive removal from package file
+aptfile edit                        # Open package file in $EDITOR
+aptfile path                        # Show path to package file
 ```
 
 ### Dotfiles Management
@@ -138,14 +154,14 @@ The repository includes a sophisticated Brewfile management system:
 ```bash
 # Daily workflow
 brewfile status --include extra     # Check status of all packages
-brewfile sync --include extra       # Install missing + remove unused
+brewfile sync                       # Install missing + remove unused (includes extra by default)
 
 # Adding new packages
 brewfile add neovim                 # Install and add to main Brewfile
 brewfile add steam --to extra       # Install and add to Brewfile.extra
 
 # Maintenance
-brewfile cleanup --include extra    # Interactive cleanup with confirmation
+brewfile cleanup                    # Interactive cleanup with confirmation (includes extra by default)
 ```
 
 ## File Organization Logic
@@ -188,7 +204,7 @@ Shell configurations are modular:
 
 This dotfiles setup assumes:
 - **zsh** as the primary shell
-- **Homebrew** package management on macOS
+- **Homebrew** package management on macOS, **apt/dnf** on Linux
 - **GNU Stow** for symlink management
-- Development tools: Python (via uv), Node.js (via pnpm), Neovim, Git
+- Development tools: Python, Node.js, Neovim, Git
 - Terminal enhancements: fzf, zoxide, starship, bat, ripgrep
