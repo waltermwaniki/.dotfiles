@@ -4,10 +4,12 @@ This repository manages dotfiles using **GNU Stow**. Instead of multiple top-lev
 
 ## Quick start
 
+Run `bootstrap.sh -h` for help.
+
 ```bash
 # Clone the repository
-git clone <your-repo-url> "$HOME/dotfiles"
-cd "$HOME/dotfiles"
+git clone <your-repo-url> "$HOME/.dotfiles"
+cd "$HOME/.dotfiles"
 
 # Run the bootstrap script to install stow (if needed) and set up your dotfiles
 ./bootstrap.sh
@@ -34,21 +36,9 @@ stow -Rvt "$HOME" home
 ```txt
 .dotfiles/
 ├─ home/              # mirrors your $HOME directory structure
-├─ home-macos/        # optional overlays for macOS
-├─ home-linux/        # optional overlays for Linux
-├─ .stow-local-ignore  # files that stow should ignore
-├─ Makefile           # convenience commands
 ├─ bootstrap.sh       # optional one-shot setup helper
 └─ .gitignore
 ```
-
-## Common commands
-
-- **Preview**: `stow -nv -t "$HOME" home`
-- **Stow**: `stow -v -t "$HOME" home`
-- **Re-stow**: `stow -Rv -t "$HOME" home`
-- **Unstow**: `stow -Dv -t "$HOME" home`
-- **Adopt existing files** (moves files from `$HOME` into repo): `stow --adopt -v -t "$HOME" home`
 
 ### Notes
 
