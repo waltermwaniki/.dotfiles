@@ -25,6 +25,9 @@ RESET = "\033[0m"
 if "NO_COLOR" in os.environ or not sys.stdout.isatty():
     BLUE = YELLOW = RED = RESET = ""
 
+# Regex for parsing package lines
+PACKAGE_LINE_RE = re.compile(r"^(tap|brew|cask|mas|whalebrew|vscode)\s+\"([^\"]+)\"")
+
 
 def say(msg):
     """Prints a message to the console with a blue '===>' prefix."""
@@ -110,9 +113,8 @@ class BrewfileManager:
             print("      (none)")
             return
         grouped = defaultdict(list)
-        line_re = re.compile(r"^(tap|brew|cask|mas|whalebrew|vscode)\s+\"([^\"]+)\"")
         for line in lines:
-            match = line_re.match(line)
+            match = PACKAGE_LINE_RE.match(line)
             if match:
                 kind, name = match.groups()
                 origin_info = ""
@@ -205,70 +207,18 @@ class BrewfileManager:
 
     def cmd_sync(self, args):
         """Runs 'install' then 'cleanup' to fully synchronize the system."""
-        say("--- Running 'install' step ---")
+        say("-- Running 'install' step --")
         self.cmd_install(args)
-        say("--- Running 'cleanup' step ---")
+        say("-- Running 'cleanup' step --")
         self.cmd_cleanup(args)
-        say("--- Sync complete ---")
-
-    def cmd_check(self, args):
-        """Checks for differences between the system and the Brewfile(s)."""
-        self._ensure_brew()
-        if not args.all and not args.include:
-            args.all = True
-        include_files = self._resolve_include_files(args)
-        all_managed_files = [self.brewfile] + include_files
-        file_basenames = [p.name for p in all_managed_files]
-        say(f"Checking system state against: {', '.join(file_basenames)}")
-        declared_packages = {}
-        for file_path in all_managed_files:
-            if file_path.exists():
-                with open(file_path, "r") as f:
-                    for line in f:
-                        cleaned_line = line.strip()
-                        if cleaned_line and cleaned_line not in declared_packages:
-                            declared_packages[cleaned_line] = file_path.name
-        installed_set = set()
-        with tempfile.NamedTemporaryFile(
-            mode="w+", suffix=".Brewfile-dump"
-        ) as temp_dump:
-            subprocess.run(
-                [
-                    "brew",
-                    "bundle",
-                    "dump",
-                    "--force",
-                    "--no-vscode",
-                    "--file",
-                    temp_dump.name,
-                ],
-                capture_output=True,
-                text=True,
-            )
-            temp_dump.seek(0)
-            for line in temp_dump:
-                cleaned_line = line.strip()
-                if cleaned_line:
-                    installed_set.add(cleaned_line)
-        declared_set_keys = set(declared_packages.keys())
-        to_install = sorted(list(declared_set_keys - installed_set))
-        to_add_to_brewfile = sorted(list(installed_set - declared_set_keys))
-        if not to_install and not to_add_to_brewfile:
-            say("System state matches Brewfile(s). No changes needed.")
-            return
-        print()
-        print(f"    {YELLOW}Missing from System{RESET}")
-        self._group_print(to_install, package_origins=declared_packages)
-        print()
-        print(f"    {YELLOW}Missing in Brewfile{RESET}")
-        self._group_print(to_add_to_brewfile)
+        say("-- Sync complete --")
 
     def cmd_dump(self, args):
         """Dumps installed packages to the Brewfile(s)."""
         self._ensure_brew()
         installed_set = set()
         with tempfile.NamedTemporaryFile(
-            mode="w+", suffix=".Brewfile-dump"
+            mode="w+", suffix=".Brewfile-dump", encoding="utf-8"
         ) as temp_dump:
             say("Dumping currently installed packages from Homebrew...")
             subprocess.run(
@@ -345,27 +295,145 @@ class BrewfileManager:
         say("Dump complete.")
 
     def cmd_list(self, args):
-        """Lists all dependencies from the main Brewfile and any included files."""
+        """Lists all dependencies from the main Brewfile and any included files,
+        showing their installation status and grouping them."""
         self._ensure_brew()
-        files_to_list = [self.brewfile] + self._resolve_include_files(args)
-        all_deps = set()
-        file_basenames = [p.name for p in files_to_list]
-        say(f"Listing dependencies from {', '.join(file_basenames)}")
-        for brewfile_path in files_to_list:
-            result = subprocess.run(
-                ["brew", "bundle", "list", "--file", str(brewfile_path)],
+
+        # Ensure all relevant Brewfiles are considered by default
+        files_to_consider_set = set()
+        files_to_consider_set.add(self.brewfile)  # Always include the main Brewfile
+
+        if args.all:
+            for path in sorted(self.repo_dir.glob("Brewfile.*")):
+                if path.is_file():
+                    files_to_consider_set.add(path)
+        elif args.include:
+            names = args.include.split(",")
+            for name in names:
+                if name:
+                    f = self.repo_dir / f"Brewfile.{name}"
+                    if f.is_file():
+                        files_to_consider_set.add(f)
+
+        files_to_consider = sorted(
+            list(files_to_consider_set)
+        )  # Convert back to sorted list
+
+        # 1. Collect Declared Packages
+        declared_packages_by_file = defaultdict(
+            list
+        )  # file_path -> list of (kind, name, original_line)
+        declared_package_lines_set = set()  # set of all unique original_line strings
+
+        for file_path in files_to_consider:
+            if file_path.exists():
+                with open(file_path, "r") as f:
+                    for line in f:
+                        cleaned_line = line.strip()
+                        if cleaned_line:
+                            match = PACKAGE_LINE_RE.match(cleaned_line)
+                            if match:
+                                kind, name = match.groups()
+                                declared_packages_by_file[file_path].append(
+                                    (kind, name, cleaned_line)
+                                )
+                                declared_package_lines_set.add(cleaned_line)
+                            # else: # No need to handle unknown lines for now
+
+        # 2. Collect Installed Packages
+        installed_package_lines_set = set()
+        with tempfile.NamedTemporaryFile(
+            mode="w+", suffix=".Brewfile-dump", encoding="utf-8"
+        ) as temp_dump:
+            subprocess.run(
+                [
+                    "brew",
+                    "bundle",
+                    "dump",
+                    "--force",
+                    "--no-vscode",
+                    "--file",
+                    temp_dump.name,
+                ],
                 capture_output=True,
                 text=True,
             )
-            for line in result.stdout.strip().split("\n"):
-                if line:
-                    all_deps.add(line)
-            if result.stderr:
-                warn(
-                    f"Error listing dependencies from {brewfile_path}:\n{result.stderr}"
-                )
-        for dep in sorted(list(all_deps)):
-            print(dep)
+            temp_dump.seek(0)
+            for line in temp_dump:
+                cleaned_line = line.strip()
+                if cleaned_line:
+                    installed_package_lines_set.add(cleaned_line)
+
+        # 3. Print Brewfile Sections
+        print()  # Add a blank line for better separation
+
+        for file_path in files_to_consider:
+            if not declared_packages_by_file[file_path]:
+                continue  # Skip if no packages declared in this file
+
+            print(f"{BLUE}Brewfile: {file_path.name}{RESET}")
+            grouped_for_print = defaultdict(
+                list
+            )  # kind -> list of (name, is_installed)
+
+            for kind, name, original_line in declared_packages_by_file[file_path]:
+                is_installed = original_line in installed_package_lines_set
+                grouped_for_print[kind].append((name, is_installed))
+
+            for kind in [
+                "tap",
+                "brew",
+                "cask",
+                "mas",
+                "whalebrew",
+                "vscode",
+            ]:  # Order matters
+                if kind in grouped_for_print:
+                    items_to_display = []
+                    for name, is_installed in sorted(
+                        grouped_for_print[kind], key=lambda x: x[0]
+                    ):
+                        display_name = name
+                        if not is_installed:
+                            display_name = f"{name} {YELLOW}(not on system){RESET}"
+                        items_to_display.append(display_name)
+                    print(
+                        f"  {kind} ({len(items_to_display)}): {', '.join(items_to_display)}"
+                    )
+            print()  # Blank line after each Brewfile section
+
+        # 4. Print "On system only" Section
+        on_system_only_lines = installed_package_lines_set - declared_package_lines_set
+        print(f"{BLUE}On system only:{RESET}")
+        if on_system_only_lines:
+            on_system_only_grouped = defaultdict(list)  # kind -> list of name
+
+            for line in on_system_only_lines:
+                match = PACKAGE_LINE_RE.match(line)
+                if match:
+                    kind, name = match.groups()
+                    on_system_only_grouped[kind].append(name)
+                else:
+                    on_system_only_grouped["unknown"].append(
+                        line
+                    )  # For lines that don't match regex
+
+            for kind in [
+                "tap",
+                "brew",
+                "cask",
+                "mas",
+                "whalebrew",
+                "vscode",
+                "unknown",
+            ]:
+                if kind in on_system_only_grouped:
+                    names = ", ".join(sorted(on_system_only_grouped[kind]))
+                    count = len(on_system_only_grouped[kind])
+                    print(f"  {kind} ({count}): {names}")
+            print()  # Blank line at the end
+        else:
+            print("  ✓ System is up to date with Brewfile(s).")
 
     def cmd_edit(self, args):
         """Opens the Brewfile in the default editor."""
@@ -483,10 +551,9 @@ def main():
     commands = {
         "install": "Install all dependencies from the Brewfile(s) (formerly 'sync').",
         "cleanup": "Preview or apply removals of unlisted packages.",
-        "check": "Show missing items and a grouped summary of differences.",
+        "list": "List all dependencies from Brewfile(s) and compare with system state.",
         "sync": "Run 'install' then 'cleanup' to fully synchronize the system.",
         "dump": "Update Brewfile from current system.",
-        "list": "Show all dependencies currently recorded.",
         "edit": "Open Brewfile in $EDITOR.",
         "path": "Print path(s) to Brewfile(s).",
         "add": "Install a package and add it to a Brewfile.",

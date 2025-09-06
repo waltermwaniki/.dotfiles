@@ -1,8 +1,9 @@
 tap "homebrew/autoupdate"
 tap "homebrew/services"
 
-brew "node"
 brew "uv"
+brew "python@3.13"
+brew "node"
 brew "pnpm"
 brew "bat"
 brew "fd"

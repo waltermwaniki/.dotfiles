@@ -1,9 +1,4 @@
-brew "libssh2"
-brew "libgit2"
-brew "rtmpdump"
-brew "openldap"
-brew "python@3.12"
-brew "ruff"
+
 
 cask "caffeine"
 cask "epic-games"
