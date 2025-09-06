@@ -1,5 +1,3 @@
 # Work-specific packages
 cask "slack"
 cask "microsoft-teams"
-cask "visual-studio-code"
-cask "firefox"
