@@ -1,0 +1,13 @@
+# usr/bin/env zsh
+
+# uv
+export PATH="/Users/mwaniki/.local/bin:$PATH"
+
+
+export PNPM_HOME="/Users/mwaniki/Library/pnpm"
+case ":$PATH:" in
+  *":$PNPM_HOME:"*) ;;
+  *) export PATH="$PNPM_HOME:$PATH" ;;
+esac
+
+PATH=~/.console-ninja/.bin:$PATH

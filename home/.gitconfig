@@ -1,0 +1,15 @@
+# This is Git's per-user configuration file.
+[user]
+	name = Walter Mwaniki
+	email = walter.g.mwaniki@gmail.com
+# Please adapt and uncomment the following lines:
+#	name = Walter Mwaniki
+#	email = walter.g.mwaniki@gmail.com
+[core]
+	excludesfile = /Users/mwaniki/.gitignore_global
+	autocrlf = input
+[filter "lfs"]
+	clean = git-lfs clean -- %f
+	smudge = git-lfs smudge -- %f
+	process = git-lfs filter-process
+	required = true
