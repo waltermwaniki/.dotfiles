@@ -1,5 +1,12 @@
 # usr/bin/env zsh
 
+# Homebrew
+eval "$(/opt/homebrew/bin/brew shellenv)"
+
+# Homebrew: Python
+export PATH="/opt/homebrew/opt/python/libexec/bin:$PATH"
+
+
 # uv
 export PATH="/Users/mwaniki/.local/bin:$PATH"
 
@@ -9,5 +16,3 @@ case ":$PATH:" in
   *":$PNPM_HOME:"*) ;;
   *) export PATH="$PNPM_HOME:$PATH" ;;
 esac
-
-PATH=~/.console-ninja/.bin:$PATH
