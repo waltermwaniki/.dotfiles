@@ -18,11 +18,12 @@ This is a **dotfiles repository** that uses **GNU Stow** for symlink management.
 
 ## Bootstrap Process
 
-The bootstrap script follows a logical three-step process for setting up a new machine:
+The bootstrap script follows a logical four-step process for setting up a new machine:
 
-1. **Install Homebrew** (macOS only) - Ensures package manager is available
-2. **Sync Brewfile packages** - Installs all dependencies including GNU Stow
-3. **Apply dotfiles** - Uses Stow to create symlinks to your configurations
+1. **Install package manager** (Homebrew on macOS) - Ensures package manager is available
+2. **Deploy package management utility** - Copies `brewfile.py` to `home/.local/bin/brewfile`
+3. **Install packages** - Uses the deployed utility to install all dependencies including GNU Stow
+4. **Apply dotfiles** - Uses Stow to create symlinks to your configurations
 
 This sequence ensures all dependencies are met before attempting to apply dotfiles.
 

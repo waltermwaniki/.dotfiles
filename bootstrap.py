@@ -13,6 +13,7 @@ import platform
 import shutil
 import subprocess
 import sys
+from abc import ABC, abstractmethod
 from pathlib import Path
 
 # ANSI colors (respect NO_COLOR and non-TTY)
@@ -52,8 +53,8 @@ def die(msg):
     sys.exit(1)
 
 
-class DotfilesBootstrap:
-    """Handles dotfiles bootstrapping using GNU Stow."""
+class BaseBootstrap(ABC):
+    """Abstract base class for dotfiles bootstrapping using GNU Stow."""
 
     def __init__(self):
         self.repo_dir = self._resolve_repo_dir()
@@ -85,42 +86,19 @@ class DotfilesBootstrap:
         else:
             return "unknown"
 
+    @abstractmethod
+    def install_package_manager(self):
+        """Install the platform's package manager if needed."""
+        pass
+
+    @abstractmethod
+    def install_packages(self):
+        """Install all packages including GNU Stow from Brewfile."""
+        pass
+
     def _check_stow_installed(self):
         """Checks if GNU Stow is installed."""
         return shutil.which("stow") is not None
-
-    def _install_stow(self):
-        """Installs GNU Stow based on the detected OS."""
-        if self._check_stow_installed():
-            say("GNU Stow is already installed.")
-            return True
-
-        say(f"Detected OS: {self.os_type}")
-        say("Installing GNU Stow...")
-
-        try:
-            if self.os_type == "macos":
-                subprocess.run(["brew", "install", "stow"], check=True)
-            elif self.os_type == "fedora":
-                subprocess.run(["sudo", "dnf", "install", "-y", "stow"], check=True)
-            elif self.os_type == "debian":
-                subprocess.run(["sudo", "apt-get", "update"], check=True)
-                subprocess.run(["sudo", "apt-get", "install", "-y", "stow"], check=True)
-            elif self.os_type == "arch":
-                subprocess.run(["sudo", "pacman", "-S", "--noconfirm", "stow"], check=True)
-            else:
-                warn("Unknown OS. Please install GNU Stow manually.")
-                return False
-
-            success("GNU Stow installed successfully.")
-            return True
-
-        except subprocess.CalledProcessError as e:
-            error(f"Failed to install GNU Stow: {e}")
-            return False
-        except FileNotFoundError:
-            error(f"Package manager not found for {self.os_type}. Please install GNU Stow manually.")
-            return False
 
     def _validate_target_directory(self, target):
         """Validates and creates the target directory if needed."""
@@ -215,24 +193,50 @@ class DotfilesBootstrap:
         
         return success
 
-    def _check_brew_installed(self):
-        """Checks if Homebrew is installed."""
-        return shutil.which("brew") is not None
+    @abstractmethod
+    def deploy_package_manager_utility(self):
+        """Deploy platform-specific package management utility."""
+        pass
 
-    def _install_brew(self):
-        """Installs Homebrew on macOS."""
+    def bootstrap(self, target="~", preview_only=False, adopt=False):
+        """Main bootstrap function."""
+        say("Starting dotfiles bootstrap...")
+        
+        # Step 1: Install package manager
+        if not self.install_package_manager():
+            die("Cannot proceed without package manager")
+        
+        # Step 2: Deploy package management utility
+        if not self.deploy_package_manager_utility():
+            die("Cannot proceed without package management utility")
+        
+        # Step 3: Install packages (includes GNU Stow)
+        if not self.install_packages():
+            die("Cannot proceed without required packages")
+        
+        # Step 4: Apply dotfiles with stow
+        target_path = Path(target).expanduser().resolve()
+        
+        if preview_only:
+            return self.preview(target_path, adopt)
+        else:
+            return self.apply(target_path, adopt)
+
+
+class DarwinBootstrap(BaseBootstrap):
+    """Darwin/macOS-specific bootstrap implementation."""
+
+    def install_package_manager(self):
+        """Install Homebrew if not already installed."""
         if self._check_brew_installed():
             say("Homebrew is already installed.")
             return True
-
-        if self.os_type != "macos":
-            return True  # Not needed on non-macOS systems
 
         say("Installing Homebrew...")
         try:
             # Use the official Homebrew install script
             install_script = '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
-            result = subprocess.run(install_script, shell=True, check=True)
+            subprocess.run(install_script, shell=True, check=True)
             
             # Add brew to PATH for this session
             brew_paths = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"]
@@ -248,8 +252,8 @@ class DotfilesBootstrap:
             error(f"Failed to install Homebrew: {e}")
             return False
 
-    def _deploy_brewfile_utility(self):
-        """Deploys brewfile.py to home/.local/bin/brewfile with proper shebang."""
+    def deploy_package_manager_utility(self):
+        """Deploy the brewfile utility for Homebrew package management."""
         source_brewfile = self.repo_dir / "brewfile.py"
         target_dir = self.repo_dir / "home" / ".local" / "bin"
         target_brewfile = target_dir / "brewfile"
@@ -276,60 +280,37 @@ class DotfilesBootstrap:
             error(f"Failed to deploy brewfile utility: {e}")
             return False
 
-    def _sync_brewfile_packages(self):
-        """Syncs packages from Brewfile using the deployed brewfile utility."""
-        # First deploy the utility
-        if not self._deploy_brewfile_utility():
-            return False
-            
+    def install_packages(self):
+        """Install all packages from Brewfile using the brewfile utility."""
         brewfile_script = self.repo_dir / "home" / ".local" / "bin" / "brewfile"
         
-        say("Syncing packages from Brewfile...")
+        say("Installing packages from Brewfile...")
         try:
             # Run brewfile install with extra packages
-            result = subprocess.run(
+            subprocess.run(
                 ["python3", str(brewfile_script), "install", "--include", "extra"],
                 cwd=self.repo_dir,
                 check=True
             )
-            success("Brewfile packages synced successfully.")
+            
+            # Verify stow is now available
+            if not self._check_stow_installed():
+                error("GNU Stow was not installed despite package installation.")
+                return False
+                
+            success("All packages installed successfully.")
             return True
             
         except subprocess.CalledProcessError as e:
-            error(f"Failed to sync Brewfile packages: {e}")
+            error(f"Failed to install packages: {e}")
             return False
         except FileNotFoundError:
             error("Python3 not found. Cannot run brewfile utility.")
             return False
 
-    def bootstrap(self, target="~", preview_only=False, adopt=False):
-        """Main bootstrap function."""
-        say("Starting dotfiles bootstrap...")
-        
-        # Step 1: Install Homebrew (macOS only)
-        if self.os_type == "macos":
-            if not self._install_brew():
-                die("Cannot proceed without Homebrew on macOS")
-        
-        # Step 2: Sync Brewfile packages (includes stow)
-        if self.os_type == "macos":
-            if not self._sync_brewfile_packages():
-                warn("Failed to sync Brewfile packages. Continuing with manual stow installation.")
-                # Fall back to manual stow installation
-                if not self._install_stow():
-                    die("Cannot proceed without GNU Stow")
-        else:
-            # Non-macOS: install stow directly
-            if not self._install_stow():
-                die("Cannot proceed without GNU Stow")
-        
-        # Step 3: Apply dotfiles with stow
-        target_path = Path(target).expanduser().resolve()
-        
-        if preview_only:
-            return self.preview(target_path, adopt)
-        else:
-            return self.apply(target_path, adopt)
+    def _check_brew_installed(self):
+        """Check if Homebrew is installed."""
+        return shutil.which("brew") is not None
 
 
 def main():
@@ -366,7 +347,12 @@ def main():
 
     args = parser.parse_args()
     
-    bootstrap = DotfilesBootstrap()
+    # Determine which bootstrap class to use based on OS
+    system = platform.system().lower()
+    if system == "darwin":
+        bootstrap = DarwinBootstrap()
+    else:
+        die(f"Unsupported platform: {system}. Currently only Darwin/macOS is supported.")
     
     try:
         if args.restow:
