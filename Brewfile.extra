@@ -1,0 +1,13 @@
+brew "libssh2"
+brew "libgit2"
+brew "rtmpdump"
+brew "curl"
+brew "openldap"
+brew "postgresql@15"
+brew "python@3.12"
+brew "ruff"
+brew "telnet"
+
+cask "caffeine"
+cask "epic-games"
+cask "steam"

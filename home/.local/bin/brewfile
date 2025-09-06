@@ -1,0 +1,313 @@
+#!/usr/bin/env bash
+# brewfile — manage Brewfile + installs
+set -euo pipefail
+
+# ANSI colors (respect NO_COLOR and non-TTY)
+BLUE="\033[1;34m"; YELLOW="\033[1;33m"; RED="\033[1;31m"; RESET="\033[0m"
+if [[ -n "${NO_COLOR:-}" || ! -t 1 ]]; then BLUE=""; YELLOW=""; RED=""; RESET=""; fi
+
+# Resolve repository root (script lives in ~/.dotfiles/home/.local/bin)
+resolve_self() {
+  local src="${BASH_SOURCE[0]}"
+  while [ -h "$src" ]; do
+    local dir; dir="$(cd -P "$(dirname "$src")" && pwd)"
+    src="$(readlink "$src")"
+    [[ $src != /* ]] && src="$dir/$src"
+  done
+  cd -P "$(dirname "$src")" && pwd
+}
+SCRIPT_DIR="$(resolve_self)"
+REPO_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+BREWFILE="$REPO_DIR/Brewfile"
+EXTRA_BREWFILE="$REPO_DIR/Brewfile.extra"
+
+INCLUDE_ALL=0
+INCLUDE_NAMES=()
+INCLUDE_FILES=()
+PRIMARY_INCLUDE_FILE=""
+
+# Discover include files based on INCLUDE_ALL/INCLUDE_NAMES
+resolve_includes() {
+  INCLUDE_FILES=()
+  if (( INCLUDE_ALL )); then
+    while IFS= read -r path; do
+      [[ -f "$path" ]] && INCLUDE_FILES+=("$path")
+    done < <(find "$REPO_DIR" -maxdepth 1 -type f -name 'Brewfile.*' | sort)
+  else
+    for name in "${INCLUDE_NAMES[@]}"; do
+      local f="$REPO_DIR/Brewfile.$name"
+      [[ -f "$f" ]] && INCLUDE_FILES+=("$f")
+    done
+  fi
+  # Primary target for new lines when appending/splitting
+  if ((${#INCLUDE_FILES[@]} > 0)); then
+    PRIMARY_INCLUDE_FILE="${INCLUDE_FILES[0]}"
+  else
+    PRIMARY_INCLUDE_FILE=""
+  fi
+}
+
+# Kinds we track in dumps
+KINDS='tap|brew|cask|mas|whalebrew|vscode'
+KIND_GREP="^(${KINDS})[[:space:]]"
+
+EDITOR_CMD="${EDITOR:-vi}"
+
+say()  { printf "${BLUE}==>${RESET} %s\n" "$*"; }
+warn() { printf "${YELLOW}[warn]${RESET} %s\n" "$*"; }
+die()  { printf "${RED}[err]${RESET} %s\n" "$*"; exit 1; }
+
+ensure_brew() {
+  # make brew available on Intel or Apple Silicon
+  eval "$(/opt/homebrew/bin/brew shellenv 2>/dev/null)" || true
+  eval "$(/usr/local/bin/brew shellenv 2>/dev/null)" || true
+  command -v brew >/dev/null 2>&1 || die "Homebrew not found."
+}
+
+usage() {
+cat <<EOF
+Usage: brewfile <command> [options]
+
+Commands:
+  apply        Install/ensure everything in Brewfile (and extra if included)
+  check        Show missing items and a grouped summary of differences (no changes)
+  dump         Update Brewfile from current system (append or --force to overwrite)
+  list         Show all dependencies currently recorded (union when --include extra)
+  cleanup      Preview removals; use --apply to actually uninstall extras
+  edit         Open Brewfile in \$EDITOR (${EDITOR_CMD})
+  path         Print path(s) to Brewfile (and extra when included)
+
+Options:
+  --include NAME  Include Brewfile.NAME (repeat or comma-separated for multiple)
+  --all           Include all Brewfile.* alongside Brewfile
+  --force          For 'dump': overwrite (and split to extra when included)
+  --apply          For 'cleanup': actually uninstall extras (DANGEROUS)
+  -h, --help       Show this help
+
+Examples:
+  brewfile check
+  brewfile apply
+  brewfile apply --include extra
+  brewfile apply --include work --include personal
+  brewfile check --all
+  brewfile dump --force
+  brewfile dump --include extra
+  brewfile cleanup
+  brewfile cleanup --include extra
+EOF
+}
+
+cmd="${1:-}"; [[ -z "$cmd" ]] && { usage; exit 2; }
+shift || true
+
+# parse shared options
+APPLY=0
+FORCE=0
+INCLUDE_EXTRA=0
+while (( "$#" )); do
+  case "$1" in
+    --include)
+      shift; val="${1:-}"; IFS=',' read -r -a parts <<< "$val"; for p in "${parts[@]}"; do [[ -n "$p" ]] && INCLUDE_NAMES+=("$p"); done ;;
+    --include=*)
+      val="${1#--include=}"; IFS=',' read -r -a parts <<< "$val"; for p in "${parts[@]}"; do [[ -n "$p" ]] && INCLUDE_NAMES+=("$p"); done ;;
+    --all) INCLUDE_ALL=1 ;;
+    --force) FORCE=1 ;;
+    --apply) APPLY=1 ;;
+    -h|--help) usage; exit 0 ;;
+    *) break ;;
+  esac
+  shift || true
+done
+
+ensure_brew
+
+resolve_includes
+
+# helper: merged Brewfile (union of main + extra) in a temp file
+merged_brewfile_tmp() {
+  local tmp; tmp="$(mktemp)"
+  if ((${#INCLUDE_FILES[@]} > 0)); then
+    awk 'NF' "$BREWFILE" "${INCLUDE_FILES[@]}" 2>/dev/null | awk '!seen[$0]++' > "$tmp" || cp "$BREWFILE" "$tmp"
+  else
+    cp "$BREWFILE" "$tmp"
+  fi
+  echo "$tmp"
+}
+
+case "$cmd" in
+  apply)
+    say "Applying Brewfile → $BREWFILE"
+    brew bundle --file "$BREWFILE"
+    if ((${#INCLUDE_FILES[@]} > 0)); then
+      for inc in "${INCLUDE_FILES[@]}"; do
+        say "Applying include → $inc"
+        brew bundle --file "$inc"
+      done
+    fi
+    ;;
+
+  check)
+    if ((${#INCLUDE_FILES[@]} > 0)); then
+      say "Checking missing items for $BREWFILE (+ ${#INCLUDE_FILES[@]} include file(s))"
+    else
+      say "Checking missing items for $BREWFILE"
+    fi
+    # brew's own check only takes one file; run against the merged view via dump compare
+    if brew bundle check --file "$BREWFILE"; then
+      say "All set. Nothing to install (for main Brewfile)."
+    else
+      warn "Some items are missing in main Brewfile. Run: brewfile apply"
+    fi
+
+    tmp="$(mktemp)"; trap 'rm -f "$tmp" "$tmp.current.sorted" "$tmp.fresh.sorted" "$current_tmp"' EXIT
+    brew bundle dump --file "$tmp" --force --no-vscode >/dev/null
+
+    current_tmp="$(merged_brewfile_tmp)"
+    # --- Order-insensitive comparison ---
+    grep -E "$KIND_GREP" "$current_tmp" | sed 's/[[:space:]]\+$//' | sort -u > "$tmp.current.sorted"
+    grep -E "$KIND_GREP" "$tmp"         | sed 's/[[:space:]]\+$//' | sort -u > "$tmp.fresh.sorted"
+
+    add_lines=$(comm -13 "$tmp.current.sorted" "$tmp.fresh.sorted" || true)
+    rm_lines=$(comm -23 "$tmp.current.sorted" "$tmp.fresh.sorted" || true)
+
+    group_print() {
+      # $1 = label, $2+ = lines (newline-separated via heredoc/echo)
+      local label="$1"; shift
+      local lines="$*"
+      printf "${BLUE}\t%s${RESET}\n" "$label"
+      if [[ -z "$lines" ]]; then
+        printf "\t  (none)\n"
+        return
+      fi
+      echo "$lines" | awk '
+        function pr(t){ if(c[t]>0){ printf("\t  %s (%d): %s\n", t, c[t], a[t]); }}
+        {
+          # Expect lines like: kind "name"
+          kind=$1
+          if (kind ~ /^(tap|brew|cask|mas|whalebrew|vscode)$/) {
+            line=$0
+            q1 = index(line, "\"")
+            if (q1 > 0) {
+              rest = substr(line, q1+1)
+              q2 = index(rest, "\"")
+              if (q2 > 0) { name = substr(rest, 1, q2-1) }
+              else { name = rest }
+              if (a[kind] == "") { a[kind]=name; c[kind]=1 } else { a[kind]=a[kind] ", " name; c[kind]++ }
+            }
+          }
+        }
+        END{ pr("tap"); pr("brew"); pr("cask"); pr("mas"); pr("whalebrew"); pr("vscode"); }'
+    }
+
+    say "Changes (ignoring order):"
+    if [[ -z "$add_lines$rm_lines" ]]; then
+      say "  No net changes between current set and fresh dump."
+    else
+      group_print "To ADD:" "$add_lines"
+      group_print "To REMOVE:" "$rm_lines"
+    fi
+    ;;
+
+  dump)
+    mkdir -p "$(dirname "$BREWFILE")"
+    if (( FORCE )); then
+      say "Dumping current system (overwrite) → $BREWFILE${INCLUDE_ALL:+ + all includes}${#INCLUDE_FILES[@]:+ + ${#INCLUDE_FILES[@]} include file(s)}"
+      tmp="$(mktemp)"; trap 'rm -f "$tmp" "$tmp.main.curr" "$tmp.mlist" "$tmp.icurr"' EXIT
+      brew bundle dump --file "$tmp" --force --no-vscode >/dev/null
+      mkdir -p "$(dirname "$BREWFILE")"
+      if ((${#INCLUDE_FILES[@]} > 0)); then
+        # Build current membership maps
+        awk -v pat="$KIND_GREP" '$0 ~ pat {print}' "$BREWFILE" 2>/dev/null | sed 's/[[:space:]]\+$//' | sort -u > "$tmp.main.curr" || true
+        : > "$BREWFILE"
+        for inc in "${INCLUDE_FILES[@]}"; do : > "$inc"; done
+        # For each line in fresh dump, place it where it used to belong; else to PRIMARY include
+        while IFS= read -r line; do
+          if [[ -s "$tmp.main.curr" ]] && grep -qxF "$line" "$tmp.main.curr"; then
+            echo "$line" >> "$BREWFILE"; continue
+          fi
+          placed=0
+          for inc in "${INCLUDE_FILES[@]}"; do
+            icurr="$inc.curr"
+            awk -v pat="$KIND_GREP" '$0 ~ pat {print}' "$inc" 2>/dev/null | sed 's/[[:space:]]\+$//' | sort -u > "$icurr" || true
+            if grep -qxF "$line" "$icurr"; then echo "$line" >> "$inc"; placed=1; break; fi
+          done
+          if (( ! placed )); then
+            if [[ -n "$PRIMARY_INCLUDE_FILE" ]]; then echo "$line" >> "$PRIMARY_INCLUDE_FILE"; else echo "$line" >> "$BREWFILE"; fi
+          fi
+        done < <(grep -E "$KIND_GREP" "$tmp")
+        say "Wrote $BREWFILE and ${#INCLUDE_FILES[@]} include file(s)"
+      else
+        cp "$tmp" "$BREWFILE"
+        say "Wrote $BREWFILE"
+      fi
+    else
+      say "Dumping current system (append new lines) → ${INCLUDE_ALL:+Brewfile.*, }Brewfile"
+      tmp="$(mktemp)"; trap 'rm -f "$tmp" "$union_tmp"' EXIT
+      brew bundle dump --file "$tmp" --force --no-vscode >/dev/null
+      touch "$BREWFILE"
+      if ((${#INCLUDE_FILES[@]} > 0)); then
+        touch "$PRIMARY_INCLUDE_FILE"
+        union_tmp="$(merged_brewfile_tmp)"
+        while IFS= read -r line; do
+          grep -qxF "$line" "$union_tmp" || echo "$line" >> "$PRIMARY_INCLUDE_FILE"
+        done < <(grep -E "$KIND_GREP" "$tmp")
+        say "Appended new items to $PRIMARY_INCLUDE_FILE"
+      else
+        while IFS= read -r line; do
+          grep -qxF "$line" "$BREWFILE" || echo "$line" >> "$BREWFILE"
+        done < <(grep -E "$KIND_GREP" "$tmp")
+        say "Appended new items to $BREWFILE"
+      fi
+    fi
+    ;;
+
+  list)
+    say "Listing dependencies from $BREWFILE${INCLUDE_ALL:+ (+ all includes)}${#INCLUDE_FILES[@]:+ (+ ${#INCLUDE_FILES[@]} include file(s))}"
+    if ((${#INCLUDE_FILES[@]} > 0)); then
+      {
+        brew bundle list --all --file "$BREWFILE"
+        for inc in "${INCLUDE_FILES[@]}"; do brew bundle list --all --file "$inc"; done
+      } | awk 'NF' | sort -u
+    else
+      brew bundle list --all --file "$BREWFILE"
+    fi
+    ;;
+
+  cleanup)
+    if ((${#INCLUDE_FILES[@]} > 0)); then
+      say "Computing items NOT in $BREWFILE (+ ${#INCLUDE_FILES[@]} include file(s))"
+    else
+      say "Computing items NOT in $BREWFILE"
+    fi
+    mf="$(merged_brewfile_tmp)"; trap 'rm -f "$mf"' EXIT
+    if (( APPLY )); then
+      warn "Applying cleanup. This will uninstall items. Press Ctrl-C to abort."
+      brew bundle cleanup --file "$mf" --force
+    else
+      # Preview mode: capture output so we can adjust messaging regardless of exit code
+      output=$(brew bundle cleanup --file "$mf" 2>&1 || true)
+      if printf "%s\n" "$output" | grep -qE '^(Would `brew cleanup`|Would remove:)'; then
+        printf "%s\n" "$output" | sed -E 's/Run `brew bundle cleanup --force` to make these changes\./Run `brewfile cleanup --apply` to make these changes./'
+        warn "The above would be removed. To apply, run: brewfile cleanup --apply"
+      else
+        say "Nothing to clean up."
+      fi
+    fi
+    ;;
+
+  edit)
+    "$EDITOR_CMD" "$BREWFILE"
+    ;;
+
+  path)
+    if ((${#INCLUDE_FILES[@]} > 0)); then
+      echo "$BREWFILE"
+      for inc in "${INCLUDE_FILES[@]}"; do echo "$inc"; done
+    else
+      echo "$BREWFILE"
+    fi
+    ;;
+
+  *)
+    usage; exit 2;;
+esac
