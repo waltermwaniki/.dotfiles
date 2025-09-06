@@ -4,7 +4,6 @@ brew "rtmpdump"
 brew "openldap"
 brew "python@3.12"
 brew "ruff"
-brew "telnet"
 
 cask "caffeine"
 cask "epic-games"

@@ -1,358 +1,532 @@
-#!/usr/bin/env bash
-# brewfile — manage Brewfile + installs
-set -euo pipefail
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+brewfile.py — A Python-based manager for Brewfile dependencies.
+"""
+
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from collections import defaultdict
+from contextlib import contextmanager
+from pathlib import Path
 
 # ANSI colors (respect NO_COLOR and non-TTY)
-BLUE="\033[1;34m"; YELLOW="\033[1;33m"; RED="\033[1;31m"; RESET="\033[0m"
-if [[ -n "${NO_COLOR:-}" || ! -t 1 ]]; then BLUE=""; YELLOW=""; RED=""; RESET=""; fi
+BLUE = "\033[1;34m"
+YELLOW = "\033[1;33m"
+RED = "\033[1;31m"
+RESET = "\033[0m"
 
-# Resolve repository root (script lives in ~/.dotfiles/home/.local/bin)
-resolve_self() {
-  local src="${BASH_SOURCE[0]}"
-  while [ -h "$src" ]; do
-    local dir; dir="$(cd -P "$(dirname "$src")" && pwd)"
-    src="$(readlink "$src")"
-    [[ "$src" != /* ]] && src="$dir/$src"
-  done
-  cd -P "$(dirname "$src")" && pwd
-}
-
-SCRIPT_DIR="$(resolve_self)"
-REPO_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-BREWFILE="$REPO_DIR/Brewfile"
-EXTRA_BREWFILE="$REPO_DIR/Brewfile.extra"
-
-INCLUDE_ALL=0
-INCLUDE_NAMES=()
-INCLUDE_FILES=()
-PRIMARY_INCLUDE_FILE=""
-
-# Discover include files based on INCLUDE_ALL/INCLUDE_NAMES
-resolve_includes() {
-  INCLUDE_FILES=()
-  if (( INCLUDE_ALL )); then
-    while IFS= read -r path; do
-      [[ -f "$path" ]] && INCLUDE_FILES+=("$path")
-    done < <(find "$REPO_DIR" -maxdepth 1 -type f -name 'Brewfile.*' | sort)
-  else
-    for name in "${INCLUDE_NAMES[@]}"; do
-      local f="$REPO_DIR/Brewfile.$name"
-      [[ -f "$f" ]] && INCLUDE_FILES+=("$f")
-    done
-  fi
-  # Primary target for new lines when appending/splitting
-  if ((${#INCLUDE_FILES[@]} > 0)); then
-    PRIMARY_INCLUDE_FILE="${INCLUDE_FILES[0]}"
-  else
-    PRIMARY_INCLUDE_FILE=""
-  fi
-}
-
-# Kinds we track in dumps
-KINDS='tap|brew|cask|mas|whalebrew|vscode'
-KIND_GREP="^(${KINDS})[[:space:]]"
-
-EDITOR_CMD="${EDITOR:-vi}"
-
-say()  { printf "${BLUE}==>${RESET} %s\n" "$*"; }
-warn() { printf "${YELLOW}[warn]${RESET} %s\n" "$*"; }
-die()  { printf "${RED}[err]${RESET} %s\n" "$*"; exit 1; }
-
-get_files_summary() {
-  local files_to_report=("$(basename "$BREWFILE")")
-  for inc in "${INCLUDE_FILES[@]}"; do
-    files_to_report+=("$(basename "$inc")")
-  done
-
-  # Join the array with ", " separator
-  local summary=""
-  local separator=""
-  for file in "${files_to_report[@]}"; do
-    summary+="${separator}${file}"
-    separator=", "
-  done
-  echo "$summary"
-}
+if "NO_COLOR" in os.environ or not sys.stdout.isatty():
+    BLUE = YELLOW = RED = RESET = ""
 
 
-ensure_brew() {
-  # make brew available on Intel or Apple Silicon
-  eval "$(/opt/homebrew/bin/brew shellenv 2>/dev/null)" || true
-  eval "$(/usr/local/bin/brew shellenv 2>/dev/null)" || true
-  command -v brew >/dev/null 2>&1 || die "Homebrew not found."
-}
-
-usage() {
-cat <<EOF
-Usage: brewfile <command> [options]
-
-Commands:
-  apply        Install/ensure everything in Brewfile (and extra if included)
-  check        Show missing items and a grouped summary of differences (no changes)
-  dump         Update Brewfile from current system (append or --force to overwrite)
-  list         Show all dependencies currently recorded (union when --include extra)
-  cleanup      Preview removals; use --apply to actually uninstall extras
-  edit         Open Brewfile in \$EDITOR (${EDITOR_CMD})
-  path         Print path(s) to Brewfile (and extra when included)
-
-Options:
-  --include NAME  Include Brewfile.NAME (repeat or comma-separated for multiple)
-  --all           Include all Brewfile.* alongside Brewfile
-  --force          For 'dump': overwrite (and split to extra when included)
-  --apply          For 'cleanup': actually uninstall extras (DANGEROUS)
-  -h, --help       Show this help
-
-Examples:
-  brewfile check
-  brewfile apply
-  brewfile apply --include extra
-  brewfile apply --include work --include personal
-  brewfile check --all
-  brewfile dump --force
-  brewfile dump --include extra
-  brewfile cleanup
-  brewfile cleanup --include extra
-EOF
-}
-
-cmd="${1:-}"; [[ -z "$cmd" ]] && { usage; exit 2; }
-shift || true
-
-# parse shared options
-APPLY=0
-FORCE=0
-INCLUDE_EXTRA=0
-while (( "$#" )); do
-  case "$1" in
-    --include | --include=*)
-      local val
-      if [[ "$1" == --include=* ]]; then
-        val="${1#--include=}"
-      else
-        shift; val="${1:-}"
-      fi
-      IFS=',' read -r -a parts <<< "$val"; for p in "${parts[@]}"; do [[ -n "$p" ]] && INCLUDE_NAMES+=("$p"); done
-      ;;
-    --all) INCLUDE_ALL=1 ;;
-    --force) FORCE=1 ;;
-    --apply) APPLY=1 ;;
-    -h|--help) usage; exit 0 ;;
-    *) break ;;
-  esac
-  shift || true
-done
-
-ensure_brew
-
-resolve_includes
-
-# helper: merged Brewfile (union of main + extra) in a temp file
-merged_brewfile_tmp() {
-  local tmp; tmp="$(mktemp)"
-  if ((${#INCLUDE_FILES[@]} > 0)); then
-    awk 'NF' "$BREWFILE" "${INCLUDE_FILES[@]}" 2>/dev/null | awk '!seen[$0]++' > "$tmp" || cp "$BREWFILE" "$tmp"
-  else
-    cp "$BREWFILE" "$tmp"
-  fi
-  echo "$tmp"
-}
-
-# --- Command Implementations ---
-cmd_apply() {
-  say "Applying Brewfile → $BREWFILE"
-  brew bundle --file "$BREWFILE"
-  if ((${#INCLUDE_FILES[@]} > 0)); then
-    for inc in "${INCLUDE_FILES[@]}"; do
-      say "Applying include → $inc"
-      brew bundle --file "$inc"
-    done
-  fi
-}
-
-cmd_check() {
-  say "Checking missing items for $(get_files_summary)"
-  # brew's own check only takes one file; run against the merged view via dump compare
-  if brew bundle check --file "$BREWFILE"; then
-    say "All set. Nothing to install (for main Brewfile)."
-  else
-    warn "Some items are missing in main Brewfile. Run: brewfile apply"
-  fi
-
-  tmp="$(mktemp)"; trap 'rm -f "$tmp" "$tmp.current.sorted" "$tmp.fresh.sorted" "$current_tmp"' EXIT
-  brew bundle dump --file "$tmp" --force --no-vscode >/dev/null
-
-  current_tmp="$(merged_brewfile_tmp)"
-  # --- Order-insensitive comparison ---
-  grep -E "$KIND_GREP" "$current_tmp" | sed 's/[[:space:]]\+$//' | sort -u > "$tmp.current.sorted"
-  grep -E "$KIND_GREP" "$tmp"         | sed 's/[[:space:]]\+$//' | sort -u > "$tmp.fresh.sorted"
-
-  add_lines=$(comm -13 "$tmp.current.sorted" "$tmp.fresh.sorted" || true)
-  rm_lines=$(comm -23 "$tmp.current.sorted" "$tmp.fresh.sorted" || true)
-
-  group_print() {
-    # $1 = label, $2+ = lines (newline-separated via heredoc/echo)
-    local label="$1"; shift
-    local lines="$*"
-    printf "${BLUE}\t%s${RESET}\n" "$label"
-    if [[ -z "$lines" ]]; then
-      printf "\t  (none)\n"
-      return
-    fi
-    echo "$lines" | awk '
-      function pr(t){ if(c[t]>0){ printf("\t  %s (%d): %s\n", t, c[t], a[t]); }}
-      {
-        kind=$1
-        # Match from the first quote to the second quote
-        if (match($0, /"([^"]+)"/)) {
-          # Get the captured group
-          name = substr($0, RSTART + 1, RLENGTH - 2)
-          if (a[kind] == "") { a[kind]=name; c[kind]=1 } else { a[kind]=a[kind] ", " name; c[kind]++ }
-        }
-      }
-      END { pr("tap"); pr("brew"); pr("cask"); pr("mas"); pr("whalebrew"); pr("vscode"); }
-    '
-  }
-
-  say "Changes (ignoring order):"
-  if [[ -z "$add_lines$rm_lines" ]]; then
-    say "  No net changes between current set and fresh dump."
-  else
-    group_print "To ADD:" "$add_lines"
-    group_print "To REMOVE:" "$rm_lines"
-  fi
-}
-
-cmd_dump() {
-  mkdir -p "$(dirname "$BREWFILE")"
-  if (( FORCE )); then
-    say "Dumping current system (overwrite) → $(get_files_summary)"
-    tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT # Simplified trap, will be redefined
-    brew bundle dump --file "$tmp" --force --no-vscode >/dev/null
-    mkdir -p "$(dirname "$BREWFILE")"
-    if ((${#INCLUDE_FILES[@]} > 0)); then
-      # --- Fix: cache all file contents BEFORE clearing them ---
-      declare -A include_caches
-      local cache_files_to_clean=()
-      local main_curr_cache; main_curr_cache="$(mktemp)"
-      cache_files_to_clean+=("$main_curr_cache")
-      awk -v pat="$KIND_GREP" '$0 ~ pat {print}' "$BREWFILE" 2>/dev/null | sed 's/[[:space:]]\+$//' | sort -u > "$main_curr_cache" || true
-
-      for inc in "${INCLUDE_FILES[@]}"; do
-        local cache_tmp; cache_tmp="$(mktemp)"
-        awk -v pat="$KIND_GREP" '$0 ~ pat {print}' "$inc" 2>/dev/null | sed 's/[[:space:]]\+$//' | sort -u > "$cache_tmp" || true
-        include_caches["$inc"]="$cache_tmp"
-        cache_files_to_clean+=("$cache_tmp")
-      done
-      trap 'rm -f "$tmp" "${cache_files_to_clean[@]}"' EXIT
-
-      # --- New logic: determine where to put new items (hand-curated main, extras to .extra) ---
-      local new_item_target="$BREWFILE"
-      for inc in "${INCLUDE_FILES[@]}"; do
-        if [[ "$inc" == "$EXTRA_BREWFILE" ]]; then
-          new_item_target="$EXTRA_BREWFILE"
-          break
-        fi
-      done
-      if [[ "$new_item_target" == "$BREWFILE" && -n "$PRIMARY_INCLUDE_FILE" ]]; then
-        # Fallback to primary include if .extra isn't specified, to protect main Brewfile
-        new_item_target="$PRIMARY_INCLUDE_FILE"
-      fi
-
-      # Now, clear the files for writing
-      : > "$BREWFILE"
-      for inc in "${INCLUDE_FILES[@]}"; do : > "$inc"; done
-
-      # For each line in fresh dump, place it where it used to belong
-      while IFS= read -r line; do
-        if [[ -s "$main_curr_cache" ]] && grep -qxF "$line" "$main_curr_cache"; then
-          echo "$line" >> "$BREWFILE"; continue
-        fi
-        placed=0
-        for inc in "${INCLUDE_FILES[@]}"; do
-          local icurr="${include_caches[$inc]}"
-          if [[ -s "$icurr" ]] && grep -qxF "$line" "$icurr"; then
-            echo "$line" >> "$inc"; placed=1; break
-          fi
-        done
-        # If not placed, it's a new item. Put it in the designated target file.
-        if (( ! placed )); then
-          echo "$line" >> "$new_item_target"
-        fi
-      done < <(grep -E "$KIND_GREP" "$tmp")
-      say "Wrote $BREWFILE and ${#INCLUDE_FILES[@]} include file(s)"
-    else
-      cp "$tmp" "$BREWFILE"
-      say "Wrote $BREWFILE"
-    fi
-  else
-    say "Dumping current system (append new lines) → ${INCLUDE_ALL:+Brewfile.*, }Brewfile"
-    tmp="$(mktemp)"; trap 'rm -f "$tmp" "$union_tmp"' EXIT
-    brew bundle dump --file "$tmp" --force --no-vscode >/dev/null
-    touch "$BREWFILE"
-    if ((${#INCLUDE_FILES[@]} > 0)); then
-      touch "$PRIMARY_INCLUDE_FILE"
-      union_tmp="$(merged_brewfile_tmp)"
-      while IFS= read -r line; do
-        grep -qxF "$line" "$union_tmp" || echo "$line" >> "$PRIMARY_INCLUDE_FILE"
-      done < <(grep -E "$KIND_GREP" "$tmp")
-      say "Appended new items to $PRIMARY_INCLUDE_FILE"
-    else
-      while IFS= read -r line; do
-        grep -qxF "$line" "$BREWFILE" || echo "$line" >> "$BREWFILE"
-      done < <(grep -E "$KIND_GREP" "$tmp")
-      say "Appended new items to $BREWFILE"
-    fi
-  fi
-}
-
-cmd_list() {
-  say "Listing dependencies from $(get_files_summary)"
-  if ((${#INCLUDE_FILES[@]} > 0)); then
-    {
-      brew bundle list --all --file "$BREWFILE"
-      for inc in "${INCLUDE_FILES[@]}"; do brew bundle list --all --file "$inc"; done
-    } | awk 'NF' | sort -u
-  else
-    brew bundle list --all --file "$BREWFILE"
-  fi
-}
-
-cmd_cleanup() {
-  say "Computing items NOT in $(get_files_summary)"
-  mf="$(merged_brewfile_tmp)"; trap 'rm -f "$mf"' EXIT
-  if (( APPLY )); then
-    warn "Applying cleanup. This will uninstall items. Press Ctrl-C to abort."
-    brew bundle cleanup --file "$mf" --force
-  else
-    # Preview mode: capture output so we can adjust messaging regardless of exit code
-    output=$(brew bundle cleanup --file "$mf" 2>&1 || true)
-    if printf "%s\n" "$output" | grep -qE '^(Would `brew cleanup`|Would remove:)'; then
-      printf "%s\n" "$output" | sed -E 's/Run `brew bundle cleanup --force` to make these changes\./Run `brewfile cleanup --apply` to make these changes./'
-      warn "The above would be removed. To apply, run: brewfile cleanup --apply"
-    else
-      say "Nothing to clean up."
-    fi
-  fi
-}
-
-cmd_edit() {
-  "$EDITOR_CMD" "$BREWFILE"
-}
-
-cmd_path() {
-  if ((${#INCLUDE_FILES[@]} > 0)); then
-    echo "$BREWFILE"
-    for inc in "${INCLUDE_FILES[@]}"; do echo "$inc"; done
-  else
-    echo "$BREWFILE"
-  fi
-}
+def say(msg):
+    """Prints a message to the console with a blue '===>' prefix."""
+    print(f"{BLUE}===>{RESET} {msg}")
 
 
-# --- Main Dispatcher ---
-case "$cmd" in
-  apply|check|dump|list|cleanup|edit|path)
-    "cmd_$cmd" "$@" ;;
-  *)
-    usage; exit 2;;
-esac
+def warn(msg):
+    """Prints a warning message to the console."""
+    print(f"{YELLOW}[warn]{RESET} {msg}")
+
+
+def die(msg):
+    """Prints an error message and exits the script."""
+    print(f"{RED}[err]{RESET} {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+class BrewfileManager:
+    """Manages Brewfile operations."""
+
+    def __init__(self):
+        self.repo_dir = self._resolve_repo_dir()
+        self.brewfile = self.repo_dir / "Brewfile"
+        self.extra_brewfile = self.repo_dir / "Brewfile.extra"
+
+    # --- Helper Methods ---
+
+    def _resolve_repo_dir(self):
+        """Resolves the git repository root from the script's location."""
+        try:
+            script_path = Path(__file__).resolve()
+            return script_path.parent.parent.parent.parent
+        except NameError:
+            return Path.cwd()
+
+    def _ensure_brew(self):
+        """Checks for the 'brew' executable in the system's PATH."""
+        if not shutil.which("brew"):
+            die("Homebrew command 'brew' not found in your PATH.")
+
+    def _resolve_include_files(self, args):
+        """Resolves and returns a list of include files based on args."""
+        include_files = []
+        if args.all:
+            for path in sorted(self.repo_dir.glob("Brewfile.*")):
+                if path.is_file():
+                    include_files.append(path)
+        elif args.include:
+            names = args.include.split(",")
+            for name in names:
+                if name:
+                    f = self.repo_dir / f"Brewfile.{name}"
+                    if f.is_file():
+                        include_files.append(f)
+        return include_files
+
+    @contextmanager
+    def _get_merged_brewfile_path(self, args):
+        """Provides the path to a temporary, merged Brewfile."""
+        files_to_merge = [self.brewfile] + self._resolve_include_files(args)
+        all_lines = set()
+        for file_path in files_to_merge:
+            if file_path.exists():
+                with open(file_path, "r") as f:
+                    for line in f:
+                        if line.strip():
+                            all_lines.add(line)
+        temp_file_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", delete=False, suffix=".Brewfile", encoding="utf-8"
+            ) as tf:
+                temp_file_path = Path(tf.name)
+                tf.writelines(sorted(list(all_lines)))
+            yield temp_file_path
+        finally:
+            if temp_file_path and temp_file_path.exists():
+                temp_file_path.unlink()
+
+    def _group_print(self, lines, package_origins=None):
+        """Parses and prints a grouped summary of package lines."""
+        if not lines:
+            print("      (none)")
+            return
+        grouped = defaultdict(list)
+        line_re = re.compile(r"^(tap|brew|cask|mas|whalebrew|vscode)\s+\"([^\"]+)\"")
+        for line in lines:
+            match = line_re.match(line)
+            if match:
+                kind, name = match.groups()
+                origin_info = ""
+                if package_origins and line in package_origins:
+                    origin_info = f" (from {package_origins[line]})"
+                grouped[kind].append(f"{name}{origin_info}")
+            else:
+                grouped["unknown"].append(line)
+        for kind in ["tap", "brew", "cask", "mas", "whalebrew", "vscode", "unknown"]:
+            if kind in grouped:
+                names = ", ".join(sorted(grouped[kind]))
+                count = len(grouped[kind])
+                print(f"      {kind} ({count}): {names}")
+
+    def _remove_line_from_file(self, file_path, line_to_remove):
+        """Reads a file, removes a specific line, and writes the file back."""
+        with open(file_path, "r") as f:
+            lines = f.readlines()
+        with open(file_path, "w") as f:
+            for line in lines:
+                if line.strip() != line_to_remove:
+                    f.write(line)
+
+    # --- Main Commands ---
+
+    def cmd_install(self, args):
+        """Applies the main Brewfile and any included files."""
+        self._ensure_brew()
+        files_to_apply = [self.brewfile] + self._resolve_include_files(args)
+        for brewfile_path in files_to_apply:
+            say(f"Applying → {brewfile_path}")
+            result = subprocess.run(
+                ["brew", "bundle", "--file", str(brewfile_path)],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode != 0:
+                if result.stdout:
+                    print(result.stdout)
+                if result.stderr:
+                    print(result.stderr, file=sys.stderr)
+                warn(f"Failed to apply {brewfile_path}")
+
+    def cmd_cleanup(self, args):
+        """Cleans up unlisted dependencies after a preview and confirmation."""
+        self._ensure_brew()
+        with self._get_merged_brewfile_path(args) as merged_file_path:
+            file_basenames = [
+                p.name for p in [self.brewfile] + self._resolve_include_files(args)
+            ]
+            say(f"Checking for unused packages against: {', '.join(file_basenames)}")
+            preview_result = subprocess.run(
+                ["brew", "bundle", "cleanup", "--file", str(merged_file_path)],
+                capture_output=True,
+                text=True,
+            )
+            if (
+                preview_result.returncode == 0
+                or "Would remove" not in preview_result.stdout
+            ):
+                say("Nothing to clean up.")
+                return
+            print(preview_result.stdout.strip())
+            warn("The above packages are not in your Brewfile(s) and would be removed.")
+            try:
+                response = input("Would you like to proceed with cleanup? (y/N): ")
+            except (EOFError, KeyboardInterrupt):
+                response = "n"
+                print()
+            if response.lower().strip() == "y":
+                say("Proceeding with cleanup...")
+                force_result = subprocess.run(
+                    [
+                        "brew",
+                        "bundle",
+                        "cleanup",
+                        "--file",
+                        str(merged_file_path),
+                        "--force",
+                    ],
+                    capture_output=False,
+                    text=True,
+                )
+                if force_result.returncode == 0:
+                    say("Cleanup complete.")
+                else:
+                    warn("Cleanup command finished with errors.")
+            else:
+                say("Cleanup aborted.")
+
+    def cmd_sync(self, args):
+        """Runs 'install' then 'cleanup' to fully synchronize the system."""
+        say("--- Running 'install' step ---")
+        self.cmd_install(args)
+        say("--- Running 'cleanup' step ---")
+        self.cmd_cleanup(args)
+        say("--- Sync complete ---")
+
+    def cmd_check(self, args):
+        """Checks for differences between the system and the Brewfile(s)."""
+        self._ensure_brew()
+        if not args.all and not args.include:
+            args.all = True
+        include_files = self._resolve_include_files(args)
+        all_managed_files = [self.brewfile] + include_files
+        file_basenames = [p.name for p in all_managed_files]
+        say(f"Checking system state against: {', '.join(file_basenames)}")
+        declared_packages = {}
+        for file_path in all_managed_files:
+            if file_path.exists():
+                with open(file_path, "r") as f:
+                    for line in f:
+                        cleaned_line = line.strip()
+                        if cleaned_line and cleaned_line not in declared_packages:
+                            declared_packages[cleaned_line] = file_path.name
+        installed_set = set()
+        with tempfile.NamedTemporaryFile(
+            mode="w+", suffix=".Brewfile-dump"
+        ) as temp_dump:
+            subprocess.run(
+                [
+                    "brew",
+                    "bundle",
+                    "dump",
+                    "--force",
+                    "--no-vscode",
+                    "--file",
+                    temp_dump.name,
+                ],
+                capture_output=True,
+                text=True,
+            )
+            temp_dump.seek(0)
+            for line in temp_dump:
+                cleaned_line = line.strip()
+                if cleaned_line:
+                    installed_set.add(cleaned_line)
+        declared_set_keys = set(declared_packages.keys())
+        to_install = sorted(list(declared_set_keys - installed_set))
+        to_add_to_brewfile = sorted(list(installed_set - declared_set_keys))
+        if not to_install and not to_add_to_brewfile:
+            say("System state matches Brewfile(s). No changes needed.")
+            return
+        print()
+        print(f"    {YELLOW}Missing from System{RESET}")
+        self._group_print(to_install, package_origins=declared_packages)
+        print()
+        print(f"    {YELLOW}Missing in Brewfile{RESET}")
+        self._group_print(to_add_to_brewfile)
+
+    def cmd_dump(self, args):
+        """Dumps installed packages to the Brewfile(s)."""
+        self._ensure_brew()
+        installed_set = set()
+        with tempfile.NamedTemporaryFile(
+            mode="w+", suffix=".Brewfile-dump"
+        ) as temp_dump:
+            say("Dumping currently installed packages from Homebrew...")
+            subprocess.run(
+                [
+                    "brew",
+                    "bundle",
+                    "dump",
+                    "--force",
+                    "--no-vscode",
+                    "--file",
+                    temp_dump.name,
+                ],
+                capture_output=True,
+                text=True,
+            )
+            temp_dump.seek(0)
+            for line in temp_dump:
+                cleaned_line = line.strip()
+                if cleaned_line:
+                    installed_set.add(cleaned_line)
+        include_files = self._resolve_include_files(args)
+        if not args.force:
+            declared_set = set()
+            with self._get_merged_brewfile_path(args) as merged_file:
+                with open(merged_file, "r") as f:
+                    for line in f:
+                        cleaned_line = line.strip()
+                        if cleaned_line:
+                            declared_set.add(cleaned_line)
+            new_packages = sorted(list(installed_set - declared_set))
+            if not new_packages:
+                say("No new packages to add. Brewfile(s) are up to date.")
+                return
+            primary_target = include_files[0] if include_files else self.brewfile
+            say(
+                f"Appending {len(new_packages)} new package(s) to {primary_target.name}..."
+            )
+            with open(primary_target, "a+") as f:
+                if f.tell() > 0:
+                    f.seek(f.tell() - 1)
+                    if f.read(1) != "\n":
+                        f.write("\n")
+                for package in new_packages:
+                    f.write(f"{package}\n")
+        else:
+            say("Performing force-overwrite dump...")
+            package_membership = {}
+            all_managed_files = [self.brewfile] + include_files
+            for file_path in all_managed_files:
+                if file_path.exists():
+                    with open(file_path, "r") as f:
+                        for line in f:
+                            cleaned_line = line.strip()
+                            if cleaned_line:
+                                package_membership[cleaned_line] = file_path
+            new_item_target = self.brewfile
+            if self.extra_brewfile in all_managed_files:
+                new_item_target = self.extra_brewfile
+            elif include_files:
+                new_item_target = include_files[0]
+            new_contents = defaultdict(list)
+            for package in sorted(list(installed_set)):
+                target_file = package_membership.get(package, new_item_target)
+                new_contents[target_file].append(package)
+            for file_path in all_managed_files:
+                say(
+                    f"Writing {len(new_contents[file_path])} items to {file_path.name}..."
+                )
+                with open(file_path, "w") as f:
+                    if new_contents[file_path]:
+                        f.write("\n".join(new_contents[file_path]) + "\n")
+                    else:
+                        f.write("")
+        say("Dump complete.")
+
+    def cmd_list(self, args):
+        """Lists all dependencies from the main Brewfile and any included files."""
+        self._ensure_brew()
+        files_to_list = [self.brewfile] + self._resolve_include_files(args)
+        all_deps = set()
+        file_basenames = [p.name for p in files_to_list]
+        say(f"Listing dependencies from {', '.join(file_basenames)}")
+        for brewfile_path in files_to_list:
+            result = subprocess.run(
+                ["brew", "bundle", "list", "--file", str(brewfile_path)],
+                capture_output=True,
+                text=True,
+            )
+            for line in result.stdout.strip().split("\n"):
+                if line:
+                    all_deps.add(line)
+            if result.stderr:
+                warn(
+                    f"Error listing dependencies from {brewfile_path}:\n{result.stderr}"
+                )
+        for dep in sorted(list(all_deps)):
+            print(dep)
+
+    def cmd_edit(self, args):
+        """Opens the Brewfile in the default editor."""
+        editor = os.environ.get("EDITOR", "vi")
+        say(f"Opening {self.brewfile} in {editor}...")
+        subprocess.run([editor, str(self.brewfile)])
+
+    def cmd_path(self, args):
+        """Prints the path to the Brewfile(s)."""
+        print(self.brewfile)
+
+    def cmd_add(self, args):
+        """Installs a package and adds it to a Brewfile."""
+        self._ensure_brew()
+        package_name = args.package_name
+        target_file = self.brewfile
+        if args.to:
+            target_file = self.repo_dir / f"Brewfile.{args.to}"
+        say(f"Adding '{package_name}' to {target_file.name}...")
+        all_files = [self.brewfile] + list(self.repo_dir.glob("Brewfile.*"))
+        for file in all_files:
+            if file.exists() and package_name in file.read_text():
+                warn(f"Package '{package_name}' already found in {file.name}.")
+                say("To ensure it is installed, run 'brewfile install'.")
+                return
+        say(f"Fetching info for '{package_name}'...")
+        info_result = subprocess.run(
+            ["brew", "info", "--json=v2", package_name], capture_output=True, text=True
+        )
+        if info_result.returncode != 0:
+            die(f"Failed to get info for '{package_name}'. Does it exist?")
+        info = json.loads(info_result.stdout)
+        kind = "cask" if info.get("casks") else "brew"
+        say(f"Installing '{package_name}'...")
+        install_result = subprocess.run(["brew", "install", package_name])
+        if install_result.returncode != 0:
+            die(f"Failed to install '{package_name}'. Please check brew's output.")
+        line_to_add = f'{kind} "{package_name}"'
+        say(f"Appending '{line_to_add}' to {target_file.name}")
+        with open(target_file, "a+") as f:
+            if f.tell() > 0:
+                f.seek(f.tell() - 1)
+                if f.read(1) != "\n":
+                    f.write("\n")
+            f.write(f"{line_to_add}\n")
+        say(f"Successfully added '{package_name}'.")
+
+    def cmd_remove(self, args):
+        """Finds a package in a Brewfile and interactively removes it."""
+        self._ensure_brew()
+        package_name = args.package_name
+        all_managed_files = [self.brewfile] + list(self.repo_dir.glob("Brewfile.*"))
+        found_file = None
+        line_to_remove = None
+        package_re = re.compile(
+            rf"^(?:tap|brew|cask|mas|whalebrew|vscode)\s+\"{re.escape(package_name)}\""
+        )
+        for file in all_managed_files:
+            if not file.exists():
+                continue
+            with open(file, "r") as f:
+                for line in f:
+                    if package_re.match(line.strip()):
+                        found_file = file
+                        line_to_remove = line.strip()
+                        break
+            if found_file:
+                break
+        if not found_file:
+            die(f"Package '{package_name}' not found in any of your Brewfile(s).")
+        say(f"Found '{line_to_remove}' in {found_file.name}")
+        print("What would you like to do?")
+        print("  (1) Uninstall (remove from file and system)")
+        print("  (2) Remove from file only")
+        print("  (3) Cancel")
+        try:
+            response = input("Enter your choice [3]: ")
+        except (EOFError, KeyboardInterrupt):
+            response = "3"
+            print()
+        choice = response.lower().strip()
+        if choice == "1":
+            say(f"Uninstalling '{package_name}' from system...")
+            uninstall_result = subprocess.run(["brew", "uninstall", package_name])
+            if uninstall_result.returncode == 0:
+                say(
+                    f"Uninstall successful. Removing '{line_to_remove}' from {found_file.name}..."
+                )
+                self._remove_line_from_file(found_file, line_to_remove)
+                say(
+                    f"'{package_name}' has been uninstalled and removed from your configuration."
+                )
+            else:
+                warn(
+                    f"Failed to uninstall '{package_name}'. Your Brewfile has not been changed."
+                )
+        elif choice == "2":
+            say(f"Removing '{line_to_remove}' from {found_file.name}...")
+            self._remove_line_from_file(found_file, line_to_remove)
+            say(f"'{package_name}' has been removed from your configuration.")
+        else:
+            say("Cancelled.")
+
+
+def main():
+    """Main function and argument parser."""
+    manager = BrewfileManager()
+    parser = argparse.ArgumentParser(
+        description="A Python-based manager for Brewfile dependencies.",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    subparsers = parser.add_subparsers(
+        dest="command", required=True, help="Available commands"
+    )
+    commands = {
+        "install": "Install all dependencies from the Brewfile(s) (formerly 'sync').",
+        "cleanup": "Preview or apply removals of unlisted packages.",
+        "check": "Show missing items and a grouped summary of differences.",
+        "sync": "Run 'install' then 'cleanup' to fully synchronize the system.",
+        "dump": "Update Brewfile from current system.",
+        "list": "Show all dependencies currently recorded.",
+        "edit": "Open Brewfile in $EDITOR.",
+        "path": "Print path(s) to Brewfile(s).",
+        "add": "Install a package and add it to a Brewfile.",
+        "remove": "Remove a package from a Brewfile interactively.",
+    }
+    for cmd, help_text in commands.items():
+        subparser = subparsers.add_parser(cmd, help=help_text)
+        subparser.add_argument(
+            "--include",
+            type=str,
+            help="Include Brewfile.NAME (comma-separated for multiple).",
+        )
+        subparser.add_argument(
+            "--all", action="store_true", help="Include all Brewfile.* files."
+        )
+        if cmd == "dump":
+            subparser.add_argument(
+                "--force", action="store_true", help="Force overwrite of Brewfile(s)."
+            )
+        if cmd == "add":
+            subparser.add_argument(
+                "package_name", help="The name of the package to add."
+            )
+            subparser.add_argument(
+                "--to",
+                type=str,
+                help="Short name of the Brewfile to add to (e.g., 'extra').",
+            )
+        if cmd == "remove":
+            subparser.add_argument(
+                "package_name", help="The name of the package to remove."
+            )
+
+    args = parser.parse_args()
+    command_func = getattr(manager, f"cmd_{args.command}", None)
+    if command_func:
+        command_func(args)
+    else:
+        die(f"Unknown command: {args.command}")
+
+
+if __name__ == "__main__":
+    main()
