@@ -82,162 +82,64 @@ class BootstrapOrchestrator:
         dotfiles_path = self.repo_dir / "dotfiles.py"
         return dotfiles_path.exists()
     
-    def _get_package_status(self):
-        """Get package management status by running brewfile status check."""
+    def _is_brewfile_functional(self):
+        """Check if brewfile utility is functional (can run without errors)."""
         if not self._check_brewfile_available():
-            return {
-                'available': False,
-                'has_issues': True,
-                'issue_count': 0,
-                'status': 'brewfile_missing'
-            }
+            return False
         
         try:
-            # Run brewfile status to check for issues
+            # Just check if it can run - don't parse complex output
             result = subprocess.run(
                 [sys.executable, str(self.repo_dir / "brewfile.py"), "status"],
                 capture_output=True,
                 text=True,
-                cwd=self.repo_dir
+                cwd=self.repo_dir,
+                timeout=30  # Prevent hanging
             )
-            
-            output = result.stdout
-            
-            # Parse output to find issues
-            has_missing = "need installation" in output
-            has_extra = "not in current config" in output
-            
-            # Count issues if we can parse them
-            missing_count = 0
-            extra_count = 0
-            
-            for line in output.split('\n'):
-                if "package(s) need installation" in line:
-                    # Extract number from line like "! 3 package(s) need installation"
-                    parts = line.split()
-                    for i, part in enumerate(parts):
-                        if part.isdigit():
-                            missing_count = int(part)
-                            break
-                elif "extra package(s) not in current config" in line:
-                    # Extract number from line like "* 6 extra package(s) not in current config"
-                    parts = line.split()
-                    for i, part in enumerate(parts):
-                        if part.isdigit():
-                            extra_count = int(part)
-                            break
-            
-            return {
-                'available': True,
-                'has_issues': has_missing or has_extra,
-                'missing_count': missing_count,
-                'extra_count': extra_count,
-                'status': 'ready'
-            }
-            
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            return {
-                'available': False,
-                'has_issues': True,
-                'issue_count': 0,
-                'status': 'error'
-            }
+            return result.returncode == 0
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+            return False
     
-    def _get_dotfiles_status(self):
-        """Get dotfiles status by analyzing stow state."""
-        if not self._check_stow_installed():
-            return {
-                'available': False,
-                'has_issues': True,
-                'status': 'stow_missing'
-            }
+    def _is_dotfiles_functional(self):
+        """Check if dotfiles utility is functional."""
+        if not self._check_stow_installed() or not self._check_dotfiles_available():
+            return False
         
         try:
-            # Check for conflicts and broken symlinks by running a stow dry-run
-            target = Path.home()
-            cmd = ["stow", "-n", "-v", "-t", str(target), "home"]
-            result = subprocess.run(cmd, cwd=self.repo_dir, capture_output=True, text=True)
-            
-            output = result.stdout + result.stderr
-            has_conflicts = "cannot stow" in output
-            
-            # Check for properly linked files
-            linked_count = 0
-            try:
-                for item in target.rglob("*"):
-                    if item.is_symlink():
-                        try:
-                            resolved = item.resolve()
-                            if str(resolved).startswith(str(self.repo_dir / "home")):
-                                linked_count += 1
-                        except (OSError, ValueError):
-                            pass
-            except PermissionError:
-                pass
-            
-            return {
-                'available': True,
-                'has_issues': has_conflicts,
-                'linked_count': linked_count,
-                'status': 'ready'
-            }
-            
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            return {
-                'available': False,
-                'has_issues': True,
-                'status': 'error'
-            }
+            # Just check if dotfiles.py can run - let it handle its own status
+            result = subprocess.run(
+                [sys.executable, str(self.repo_dir / "dotfiles.py")],
+                capture_output=True,
+                text=True,
+                cwd=self.repo_dir,
+                timeout=10,  # Shorter timeout since it's interactive
+                input="q\n"  # Send quit command to exit gracefully
+            )
+            return result.returncode == 0
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+            return False
     
     def _print_system_status(self):
-        """Print comprehensive system status."""
+        """Print simple system status focusing on what's available."""
         print(f"\n{BLUE}Development Environment Status:{RESET}")
         
         # Check package manager
-        if self._check_homebrew_installed():
-            print(f"  ✓ Package manager installed (Homebrew)")
-        else:
+        if not self._check_homebrew_installed():
             print(f"  ! Package manager missing (install Homebrew first)")
             return False
+        print(f"  ✓ Package manager installed (Homebrew)")
         
-        # Check package status
-        package_status = self._get_package_status()
-        if package_status['available']:
-            if package_status['has_issues']:
-                missing = package_status.get('missing_count', 0)
-                extra = package_status.get('extra_count', 0)
-                issues = []
-                if missing > 0:
-                    issues.append(f"{missing} missing")
-                if extra > 0:
-                    issues.append(f"{extra} extra")
-                print(f"  ! Package issues detected ({', '.join(issues)})")
-            else:
-                print(f"  ✓ Packages properly managed")
+        # Check package management
+        if self._is_brewfile_functional():
+            print(f"  ✓ Package management ready")
         else:
-            print(f"  ! Package management not available")
+            print(f"  ! Package management needs attention")
         
-        # Check dotfiles status
-        dotfiles_status = self._get_dotfiles_status()
-        if dotfiles_status['available']:
-            if dotfiles_status['has_issues']:
-                print(f"  ! Dotfile issues detected")
-            else:
-                linked = dotfiles_status.get('linked_count', 0)
-                print(f"  ✓ Dotfiles properly linked ({linked} files)")
+        # Check dotfiles management
+        if self._is_dotfiles_functional():
+            print(f"  ✓ Dotfiles management ready")
         else:
-            print(f"  ! Dotfiles management not available (install GNU Stow)")
-        
-        # Check utilities
-        if self._check_brewfile_available():
-            print(f"  ✓ Package management utility available")
-        else:
-            print(f"  ! Package management utility missing")
-        
-        if self._check_dotfiles_available():
-            print(f"  ✓ Dotfiles management utility available")
-        else:
-            print(f"  ! Dotfiles management utility missing")
+            print(f"  ! Dotfiles management needs attention")
         
         return True
     
@@ -264,80 +166,70 @@ class BootstrapOrchestrator:
             return False
     
     def _show_detailed_status(self):
-        """Show detailed status including specific issues."""
-        print(f"\n{BLUE}Detailed System Status:{RESET}")
+        """Show detailed status by delegating to specialized tools."""
+        say("Showing detailed status from specialized tools...")
         
-        # Package details
-        package_status = self._get_package_status()
-        if package_status['available']:
-            print(f"\n{YELLOW}Package Management:{RESET}")
-            if package_status['has_issues']:
-                missing = package_status.get('missing_count', 0)
-                extra = package_status.get('extra_count', 0)
-                if missing > 0:
-                    print(f"  ! {missing} package(s) need installation")
-                if extra > 0:
-                    print(f"  * {extra} package(s) would be removed (not in current scope)")
-                print(f"  → Run 'python3 brewfile.py' for interactive management")
-            else:
-                print(f"  ✓ All packages properly managed")
+        # Delegate to brewfile for package status
+        if self._is_brewfile_functional():
+            print(f"\n{YELLOW}Package Status (via brewfile):{RESET}")
+            try:
+                result = subprocess.run(
+                    [sys.executable, str(self.repo_dir / "brewfile.py"), "status"],
+                    cwd=self.repo_dir,
+                    timeout=30
+                )
+            except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+                error("Failed to get package status")
         else:
-            print(f"\n{YELLOW}Package Management:{RESET}")
-            print(f"  ! Package management not available")
-            print(f"  → Run 'python3 bootstrap.py' to set up package management")
+            print(f"\n{YELLOW}Package Status:{RESET}")
+            print(f"  ! Package management not functional")
+            print(f"  → Ensure Homebrew is installed and brewfile.py is available")
         
-        # Dotfiles details
-        dotfiles_status = self._get_dotfiles_status()
-        print(f"\n{YELLOW}Dotfiles Management:{RESET}")
-        if dotfiles_status['available']:
-            linked = dotfiles_status.get('linked_count', 0)
-            print(f"  ✓ {linked} file(s) currently linked")
-            if dotfiles_status['has_issues']:
-                print(f"  ! Conflicts detected")
-                print(f"  → Run 'python3 dotfiles.py' for interactive conflict resolution")
-            else:
-                print(f"  ✓ No conflicts detected")
+        # Delegate to dotfiles for dotfiles status
+        if self._is_dotfiles_functional():
+            print(f"\n{YELLOW}Dotfiles Status (via dotfiles utility):{RESET}")
+            try:
+                result = subprocess.run(
+                    [sys.executable, str(self.repo_dir / "dotfiles.py")],
+                    cwd=self.repo_dir,
+                    timeout=10,
+                    input="q\n",  # Quit after showing status
+                    text=True
+                )
+            except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+                error("Failed to get dotfiles status")
         else:
-            print(f"  ! GNU Stow not installed")
-            print(f"  → Install with: brew install stow")
+            print(f"\n{YELLOW}Dotfiles Status:{RESET}")
+            print(f"  ! Dotfiles management not functional")
+            print(f"  → Ensure GNU Stow is installed and dotfiles.py is available")
     
     def cmd_interactive(self):
-        """Main interactive bootstrap orchestrator."""
+        """Main interactive bootstrap orchestrator - delegates to specialized tools."""
         # Print system status
         if not self._print_system_status():
             say("Please install Homebrew first: https://brew.sh")
             return
         
-        # Check if everything is perfect
-        package_status = self._get_package_status()
-        dotfiles_status = self._get_dotfiles_status()
-        
-        has_package_issues = package_status.get('has_issues', True)
-        has_dotfiles_issues = dotfiles_status.get('has_issues', True)
-        
-        if not has_package_issues and not has_dotfiles_issues:
-            success("✓ Development environment is fully configured!")
-            say("Your packages and dotfiles are perfectly synchronized.")
-            return
-        
-        # Show interactive menu for issues
+        # Simple delegation-based menu
         print(f"\nWhat would you like to manage?")
         menu_options = []
         option_num = 1
         
-        if has_package_issues and package_status.get('available', False):
+        # Always offer package management if brewfile is functional
+        if self._is_brewfile_functional():
             print(f"  ({option_num}) Packages (interactive brewfile management)")
             menu_options.append(('packages', self._launch_brewfile))
             option_num += 1
         
-        if has_dotfiles_issues and dotfiles_status.get('available', False):
+        # Always offer dotfiles management if dotfiles is functional
+        if self._is_dotfiles_functional():
             print(f"  ({option_num}) Dotfiles (interactive dotfiles management)")
             menu_options.append(('dotfiles', self._launch_dotfiles))
             option_num += 1
         
+        # Always offer detailed status
         print(f"  ({option_num}) Show detailed status")
         menu_options.append(('status', self._show_detailed_status))
-        option_num += 1
         
         print(f"  (q) Quit")
         
