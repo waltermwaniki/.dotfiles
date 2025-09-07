@@ -2,27 +2,25 @@
   "version": "1.0",
   "packages": {
     "core": {
-      "taps": [
-        "homebrew/autoupdate"
-      ],
+      "taps": ["homebrew/autoupdate"],
       "brews": [
         "stow",
+        "mas",
+        "starship",
+        "zsh-autosuggestions",
+        "zsh-syntax-highlighting",
+        "zoxide",
+        "curlie",
         "bat",
         "fd",
         "fzf",
         "ripgrep",
-        "starship",
-        "tree",
-        "zoxide",
-        "zsh-autosuggestions",
-        "zsh-syntax-highlighting"
+        "tree"
       ],
-      "casks": [
-        "font-monaspace",
-        "warp"
-      ]
+      "casks": ["google-chrome", "obsidian", "font-monaspace", "ghostty"]
     },
     "dev": {
+      "taps": [],
       "brews": [
         "uv",
         "python@3.13",
@@ -30,45 +28,19 @@
         "pnpm",
         "gemini-cli",
         "gh",
-        "neovim",
-        "curlie"
+        "neovim"
       ],
-      "casks": [
-        "ghostty",
-        "github",
-        "obsidian"
-      ]
+      "casks": ["warp", "zed", "tableplus", "postman"]
     },
-    "personal": {
-      "casks": [
-        "caffeine",
-        "epic-games",
-        "steam",
-        "logi-options+",
-        "zed",
-        "mos"
-      ]
+    "mac-utils": {
+      "brews": [],
+      "casks": ["mos", "logi-options+", "caffeine"]
     },
-    "OSXLT3QF7WY": {
-      "taps": [],
-      "brews": [
-        "xz",
-        "libusb"
-      ],
-      "casks": [
-        "pycharm",
-        "rectangle",
-        "iterm2",
-        "hiddenbar"
-      ]
+    "gaming": {
+      "casks": ["epic-games", "steam"]
     }
   },
   "machines": {
-    "OSXLT3QF7WY": [
-      "core",
-      "dev",
-      "personal",
-      "OSXLT3QF7WY"
-    ]
+    "OSXLT3QF7WY": ["core", "dev"]
   }
 }

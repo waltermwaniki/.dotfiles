@@ -14,6 +14,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Set, Tuple, Optional, Any
 
@@ -55,6 +56,151 @@ def die(msg: str) -> None:
     sys.exit(1)
 
 
+@dataclass
+class PackageGroup:
+    """Represents a group of packages with taps, brews, and casks."""
+    taps: List[str] = field(default_factory=list)
+    brews: List[str] = field(default_factory=list)
+    casks: List[str] = field(default_factory=list)
+    
+    def get_all_packages(self) -> Dict[str, List[str]]:
+        """Get all packages as a dictionary."""
+        return {
+            'taps': self.taps.copy(),
+            'brews': self.brews.copy(),
+            'casks': self.casks.copy()
+        }
+    
+    def add_package(self, package_type: str, package_name: str) -> None:
+        """Add a package to this group."""
+        if package_type == 'taps':
+            if package_name not in self.taps:
+                self.taps.append(package_name)
+        elif package_type == 'brews':
+            if package_name not in self.brews:
+                self.brews.append(package_name)
+        elif package_type == 'casks':
+            if package_name not in self.casks:
+                self.casks.append(package_name)
+        else:
+            raise ValueError(f"Unknown package type: {package_type}")
+    
+    def remove_package(self, package_type: str, package_name: str) -> bool:
+        """Remove a package from this group. Returns True if removed."""
+        if package_type == 'taps' and package_name in self.taps:
+            self.taps.remove(package_name)
+            return True
+        elif package_type == 'brews' and package_name in self.brews:
+            self.brews.remove(package_name)
+            return True
+        elif package_type == 'casks' and package_name in self.casks:
+            self.casks.remove(package_name)
+            return True
+        return False
+
+
+@dataclass
+class PackageStatus:
+    """Status information for a package."""
+    name: str
+    group: str
+    package_type: str  # 'tap', 'brew', 'cask'
+    installed: bool
+
+
+@dataclass
+class BrewfileConfig:
+    """Complete brewfile configuration."""
+    version: str = "1.0"
+    packages: Dict[str, PackageGroup] = field(default_factory=dict)
+    machines: Dict[str, List[str]] = field(default_factory=dict)  # hostname -> group names
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'BrewfileConfig':
+        """Create config from dictionary (loaded JSON)."""
+        # Convert package groups from dict to PackageGroup objects
+        packages = {}
+        for name, pkg_data in data.get('packages', {}).items():
+            packages[name] = PackageGroup(
+                taps=pkg_data.get('taps', []),
+                brews=pkg_data.get('brews', []),
+                casks=pkg_data.get('casks', [])
+            )
+        
+        return cls(
+            version=data.get('version', '1.0'),
+            packages=packages,
+            machines=data.get('machines', {})
+        )
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert config to dictionary for JSON serialization."""
+        packages_dict = {}
+        for name, pkg_group in self.packages.items():
+            packages_dict[name] = {
+                'taps': pkg_group.taps,
+                'brews': pkg_group.brews,
+                'casks': pkg_group.casks
+            }
+        
+        return {
+            'version': self.version,
+            'packages': packages_dict,
+            'machines': self.machines
+        }
+    
+    def get_machine_groups(self, machine_name: str) -> List[str]:
+        """Get package groups for a specific machine."""
+        groups = self.machines.get(machine_name, [])
+        
+        # Auto-include machine-specific group if it exists
+        if machine_name in self.packages:
+            if machine_name not in groups:
+                groups = groups + [machine_name]
+        
+        return groups
+    
+    def set_machine_groups(self, machine_name: str, groups: List[str]) -> None:
+        """Set package groups for a specific machine."""
+        self.machines[machine_name] = groups
+    
+    def get_available_groups(self) -> List[str]:
+        """Get all available package groups."""
+        return list(self.packages.keys())
+    
+    def ensure_group_exists(self, group_name: str) -> None:
+        """Ensure a package group exists."""
+        if group_name not in self.packages:
+            self.packages[group_name] = PackageGroup()
+    
+    def collect_packages_for_groups(self, groups: List[str]) -> List[PackageStatus]:
+        """Collect all packages for given groups with status information."""
+        packages = []
+        seen_packages = set()  # Track (package_type, package_name) to avoid duplicates
+        
+        for group in groups:
+            if group not in self.packages:
+                continue
+                
+            group_data = self.packages[group]
+            
+            # Process each package type
+            for package_type in ['taps', 'brews', 'casks']:
+                package_list = getattr(group_data, package_type)
+                for package in package_list:
+                    package_key = (package_type, package)
+                    if package_key not in seen_packages:
+                        packages.append(PackageStatus(
+                            name=package,
+                            group=group,
+                            package_type=package_type[:-1],  # Remove 's' (taps -> tap)
+                            installed=False  # Will be updated by caller
+                        ))
+                        seen_packages.add(package_key)
+        
+        return packages
+
+
 class BrewfileManager:
     """Manages Homebrew packages using JSON config and brew bundle."""
     
@@ -65,34 +211,30 @@ class BrewfileManager:
         self.machine_name = socket.gethostname().split('.')[0]  # Short hostname
         self.config = self._load_config()
     
-    def _load_config(self) -> Dict[str, Any]:
+    def _load_config(self) -> BrewfileConfig:
         """Load configuration from JSON file."""
         if not self.config_file.exists():
             return self._create_default_config()
         
         try:
             with open(self.config_file, 'r') as f:
-                config = json.load(f)
+                data = json.load(f)
             
             # Validate basic structure
             required_keys = ['version', 'packages', 'machines']
             for key in required_keys:
-                if key not in config:
+                if key not in data:
                     warn(f"Config missing required key: {key}")
                     return self._create_default_config()
             
-            return config
+            return BrewfileConfig.from_dict(data)
         except (json.JSONDecodeError, FileNotFoundError) as e:
             warn(f"Could not load config: {e}")
             return self._create_default_config()
     
-    def _create_default_config(self) -> Dict[str, Any]:
+    def _create_default_config(self) -> BrewfileConfig:
         """Create default configuration structure."""
-        return {
-            "version": "1.0",
-            "packages": {},
-            "machines": {}
-        }
+        return BrewfileConfig()
     
     def _save_config(self) -> None:
         """Save configuration to JSON file."""
@@ -100,70 +242,54 @@ class BrewfileManager:
         
         try:
             with open(self.config_file, 'w') as f:
-                json.dump(self.config, f, indent=2)
+                json.dump(self.config.to_dict(), f, indent=2)
         except OSError as e:
             die(f"Could not save config: {e}")
     
     def _get_machine_groups(self) -> List[str]:
         """Get package groups for current machine."""
-        groups = self.config.get('machines', {}).get(self.machine_name, [])
-        
-        # Auto-include machine-specific group if it exists
-        if self.machine_name in self.config.get('packages', {}):
-            if self.machine_name not in groups:
-                groups.append(self.machine_name)
-        
-        return groups
+        return self.config.get_machine_groups(self.machine_name)
     
     def _set_machine_groups(self, groups: List[str]) -> None:
         """Set package groups for current machine."""
-        if 'machines' not in self.config:
-            self.config['machines'] = {}
-        self.config['machines'][self.machine_name] = groups
+        self.config.set_machine_groups(self.machine_name, groups)
         self._save_config()
     
     def _get_available_groups(self) -> List[str]:
         """Get all available package groups."""
-        return list(self.config.get('packages', {}).keys())
+        return self.config.get_available_groups()
     
-    def _collect_packages_for_groups(self, groups: List[str]) -> Dict[str, List[Tuple[str, str]]]:
-        """Collect all packages for given groups, with group information."""
-        collected = {'taps': [], 'brews': [], 'casks': []}
-        
-        for group in groups:
-            group_packages = self.config.get('packages', {}).get(group, {})
-            for package_type in ['taps', 'brews', 'casks']:
-                packages = group_packages.get(package_type, [])
-                for package in packages:
-                    # Check if package already exists
-                    existing = next((p for p, g in collected[package_type] if p == package), None)
-                    if not existing:
-                        collected[package_type].append((package, group))
-        
-        return collected
+    def _collect_packages_for_groups(self, groups: List[str]) -> List[PackageStatus]:
+        """Collect all packages for given groups with status information."""
+        return self.config.collect_packages_for_groups(groups)
     
     def _generate_brewfile_content(self, groups: List[str]) -> str:
         """Generate Brewfile content for given groups."""
         packages = self._collect_packages_for_groups(groups)
         
+        # Group packages by type
+        taps = [p.name for p in packages if p.package_type == 'tap']
+        brews = [p.name for p in packages if p.package_type == 'brew']
+        casks = [p.name for p in packages if p.package_type == 'cask']
+        
         lines = []
         
         # Add taps
-        for tap, group in packages['taps']:
+        for tap in taps:
             lines.append(f'tap "{tap}"')
         
-        if packages['taps']:
+        if taps:
             lines.append('')  # Empty line after taps
         
         # Add brews
-        for brew, group in packages['brews']:
+        for brew in brews:
             lines.append(f'brew "{brew}"')
         
-        if packages['brews']:
+        if brews:
             lines.append('')  # Empty line after brews
         
         # Add casks
-        for cask, group in packages['casks']:
+        for cask in casks:
             lines.append(f'cask "{cask}"')
         
         return '\n'.join(lines) + '\n'
@@ -242,17 +368,12 @@ class BrewfileManager:
     
     def _check_machine_configured(self) -> bool:
         """Check if current machine is configured."""
-        return self.machine_name in self.config.get('machines', {})
+        return self.machine_name in self.config.machines
     
     def _ensure_machine_group_exists(self) -> None:
         """Ensure machine-specific package group exists in config."""
-        if self.machine_name not in self.config.get('packages', {}):
-            self.config.setdefault('packages', {})[self.machine_name] = {
-                'taps': [],
-                'brews': [],
-                'casks': []
-            }
-            self._save_config()
+        self.config.ensure_group_exists(self.machine_name)
+        self._save_config()
     
     def cmd_init(self) -> None:
         """Initialize or update machine configuration."""
@@ -325,47 +446,51 @@ class BrewfileManager:
         groups = self._get_machine_groups()
         configured_packages = self._collect_packages_for_groups(groups)
         
+        # Update installation status for configured packages
+        for pkg in configured_packages:
+            pkg_type_plural = f"{pkg.package_type}s"
+            pkg.installed = pkg.name in system_packages.get(pkg_type_plural, [])
+        
         print(f"\n{BLUE}Package Status for {self.machine_name}:{RESET}")
         print(f"Groups: {', '.join(groups)}")
         
-        # Check each package type
-        for package_type in ['taps', 'brews', 'casks']:
-            # Extract just the package names for comparison
-            configured_names = [p for p, g in configured_packages[package_type]]
-            installed = set(system_packages[package_type])
+        # Group packages by type for display
+        packages_by_type = {
+            'taps': [p for p in configured_packages if p.package_type == 'tap'],
+            'brews': [p for p in configured_packages if p.package_type == 'brew'], 
+            'casks': [p for p in configured_packages if p.package_type == 'cask']
+        }
+        
+        total_missing = 0
+        total_extra = 0
+        
+        # Show each package type
+        for package_type, packages in packages_by_type.items():
+            configured_names = {p.name for p in packages}
+            installed = set(system_packages.get(package_type, []))
+            extra = installed - configured_names
             
-            missing_names = set(configured_names) - installed
-            extra = installed - set(configured_names)
-            
-            # Show configured packages first
-            if configured_packages[package_type]:
+            # Show configured packages
+            if packages:
                 print(f"\n{package_type.title()}:")
-                for package, group in sorted(configured_packages[package_type]):
-                    if package in missing_names:
-                        print(f"  ! {package} {GRAY}({group}){RESET}")
+                for pkg in sorted(packages, key=lambda x: x.name):
+                    if pkg.installed:
+                        print(f"  ✓ {pkg.name} {GRAY}({pkg.group}){RESET}")
                     else:
-                        print(f"  ✓ {package} {GRAY}({group}){RESET}")
+                        print(f"  ! {pkg.name} {GRAY}({pkg.group}){RESET}")
+                        total_missing += 1
             
             # Show extra packages that aren't in any group
             if extra:
-                if configured_packages[package_type]:  # Only add extra header if we had configured packages
+                if packages:  # Only add extra header if we had configured packages
                     print(f"\n{package_type.title()} (extra):")
                 else:  # No configured packages, so this is the main section
                     print(f"\n{package_type.title()}:")
                 for package in sorted(extra):
                     print(f"  * {package}")
+                total_extra += len(extra)
         
         # Summary
-        total_missing = 0
-        total_extra = 0
-        
-        for package_type in ['taps', 'brews', 'casks']:
-            configured_names = [p for p, g in configured_packages[package_type]]
-            installed = set(system_packages[package_type])
-            
-            total_missing += len(set(configured_names) - installed)
-            total_extra += len(installed - set(configured_names))
-        
         print(f"\nSummary:")
         if total_missing > 0:
             print(f"  ! {total_missing} package(s) need installation")
@@ -426,9 +551,9 @@ class BrewfileManager:
         # Find extra packages
         extra_packages = []
         for package_type in ['taps', 'brews', 'casks']:
-            configured_names = [p for p, g in configured_packages[package_type]]
+            configured_names = {p.name for p in configured_packages if p.package_type == package_type[:-1]}
             installed = set(system_packages[package_type])
-            extra = installed - set(configured_names)
+            extra = installed - configured_names
             
             for package in extra:
                 extra_packages.append((package_type, package))
@@ -499,10 +624,10 @@ class BrewfileManager:
         self._add_packages_to_group(packages, self.machine_name)
         
         # Add machine group to machine's groups if not already there
-        machine_groups = self.config.get('machines', {}).get(self.machine_name, [])
+        machine_groups = self.config.machines.get(self.machine_name, [])
         if self.machine_name not in machine_groups:
             machine_groups.append(self.machine_name)
-            self.config.setdefault('machines', {})[self.machine_name] = machine_groups
+            self.config.machines[self.machine_name] = machine_groups
             self._save_config()
     
     def _adopt_to_new_group(self, packages: List[Tuple[str, str]]) -> None:
@@ -517,16 +642,12 @@ class BrewfileManager:
             warn("Group name cannot be empty.")
             return
         
-        if group_name in self.config.get('packages', {}):
+        if group_name in self.config.packages:
             warn(f"Group '{group_name}' already exists.")
             return
         
         # Create new group
-        self.config.setdefault('packages', {})[group_name] = {
-            'taps': [],
-            'brews': [],
-            'casks': []
-        }
+        self.config.ensure_group_exists(group_name)
         
         self._add_packages_to_group(packages, group_name)
         
@@ -534,20 +655,22 @@ class BrewfileManager:
         print(f"\nAdd '{group_name}' to this machine's groups? (y/N): ", end="")
         try:
             if input().lower().startswith('y'):
-                machine_groups = self.config.get('machines', {}).get(self.machine_name, [])
+                machine_groups = self.config.machines.get(self.machine_name, [])
                 machine_groups.append(group_name)
-                self.config.setdefault('machines', {})[self.machine_name] = machine_groups
+                self.config.machines[self.machine_name] = machine_groups
                 self._save_config()
         except (EOFError, KeyboardInterrupt):
             print()
     
     def _add_packages_to_group(self, packages: List[Tuple[str, str]], group_name: str) -> None:
         """Add packages to a specific group."""
-        group = self.config['packages'][group_name]
+        if group_name not in self.config.packages:
+            self.config.ensure_group_exists(group_name)
+            
+        group = self.config.packages[group_name]
         
         for package_type, package in packages:
-            if package not in group[package_type]:
-                group[package_type].append(package)
+            group.add_package(package_type, package)
         
         self._save_config()
         success(f"Added {len(packages)} package(s) to group '{group_name}'.")
