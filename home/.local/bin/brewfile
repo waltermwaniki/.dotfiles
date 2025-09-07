@@ -145,23 +145,6 @@ class BrewfileManager:
 
     # --- Main Commands ---
 
-    def cmd_install(self, args):
-        """Applies the main Brewfile and any included files."""
-        self._ensure_brew()
-        files_to_apply = [self.brewfile] + self._resolve_include_files(args)
-        for brewfile_path in files_to_apply:
-            say(f"Applying → {brewfile_path}")
-            result = subprocess.run(
-                ["brew", "bundle", "--file", str(brewfile_path)],
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode != 0:
-                if result.stdout:
-                    print(result.stdout)
-                if result.stderr:
-                    print(result.stderr, file=sys.stderr)
-                warn(f"Failed to apply {brewfile_path}")
 
     def _analyze_package_status(self, args):
         """Analyzes package status across all Brewfiles and returns structured data.
@@ -361,59 +344,10 @@ class BrewfileManager:
                     print(f"{prefix}{display_name}")
                 print()  # Blank line after each kind
         
-        file_basenames = [f.name for f in status_data['files_considered']]
-        print(f"{RED}* Items marked with asterisk would be removed (not declared in current scope: {', '.join(file_basenames)}){RESET}")
-        print()
+        # Note: In cleanup, all items shown would be removed, so no need for redundant legend
+        # The legend is already clear from the "Packages that would be removed" title
     
-    def cmd_cleanup(self, args):
-        """Cleans up unlisted dependencies after a preview and confirmation."""
-        self._ensure_brew()
-        
-        # Analyze current package status
-        status_data = self._analyze_package_status(args)
-        
-        file_basenames = [p.name for p in status_data['files_considered']]
-        say(f"Checking for unused packages against: {', '.join(file_basenames)}")
-        
-        # Get packages that would be cleaned up
-        cleanup_packages = status_data['on_system_only']
-        
-        if not cleanup_packages:
-            say("Nothing to clean up.")
-            return
-        
-        # Print enhanced preview
-        self._print_cleanup_preview(status_data, cleanup_packages)
-        
-        warn(f"The above {len(cleanup_packages)} package(s) would be removed.")
-        
-        try:
-            response = input("Would you like to proceed with cleanup? (y/N): ")
-        except (EOFError, KeyboardInterrupt):
-            response = "n"
-            print()
-        
-        if response.lower().strip() == "y":
-            say("Proceeding with cleanup...")
-            with self._get_merged_brewfile_path(args) as merged_file_path:
-                force_result = subprocess.run(
-                    ["brew", "bundle", "cleanup", "--file", str(merged_file_path), "--force"],
-                    capture_output=False, text=True,
-                )
-                if force_result.returncode == 0:
-                    say("Cleanup complete.")
-                else:
-                    warn("Cleanup command finished with errors.")
-        else:
-            say("Cleanup aborted.")
 
-    def cmd_sync(self, args):
-        """Runs 'install' then 'cleanup' to fully synchronize the system."""
-        say("-- Running 'install' step --")
-        self.cmd_install(args)
-        say("-- Running 'cleanup' step --")
-        self.cmd_cleanup(args)
-        say("-- Sync complete --")
 
     def cmd_dump(self, args):
         """Dumps installed packages to the Brewfile(s)."""
@@ -541,17 +475,8 @@ class BrewfileManager:
         
         return unified_packages
     
-    def cmd_status(self, args):
-        """Shows unified status of all packages organized by type with source indicators."""
-        self._ensure_brew()
-        
-        # Use shared analysis method
-        status_data = self._analyze_package_status(args)
-        
-        # Create unified view
-        unified_packages = self._create_unified_package_view(status_data)
-        
-        # Print unified package view
+    def _print_status_view(self, status_data, unified_packages):
+        """Prints the unified status view (shared between status and interactive commands)."""
         print()  # Add a blank line for better separation
         
         for kind in ["tap", "brew", "cask", "mas", "whalebrew", "vscode"]:
@@ -563,38 +488,168 @@ class BrewfileManager:
                     prefix = "  "
                     display_name = name
                     
-                    # Determine source label
+                    # Determine source label and prefix (only color the indicators)
                     if extra_info.get('system_only'):
                         source_label = "On system only"
                         prefix = f"  {RED}*{RESET} "
                     elif extra_info.get('brewfile_sources'):
-                        brewfile_names = ", ".join(sorted([f.name for f in extra_info['brewfile_sources']]))
-                        source_label = brewfile_names
+                        # Use shorter names (remove "Brewfile." prefix)
+                        short_names = []
+                        for f in sorted(extra_info['brewfile_sources']):
+                            if f.name == "Brewfile":
+                                short_names.append("main")
+                            else:
+                                short_names.append(f.name.replace("Brewfile.", ""))
+                        source_label = ", ".join(short_names)
+                        
                         if extra_info.get('would_be_removed'):
                             prefix = f"  {RED}*{RESET} "
+                        elif extra_info.get('not_installed'):
+                            prefix = f"  {YELLOW}!{RESET} "
+                        else:
+                            prefix = "  "  # Normal packages - no indicator
                     else:
                         source_label = "Unknown"
+                        prefix = "  "
                     
+                    # Package name and source are always normal color
                     display_name = f"{name} [{source_label}]"
-                    
-                    # Apply installation status styling
-                    if extra_info.get('not_installed'):
-                        display_name = f"{display_name} {YELLOW}(not on system){RESET}"
                     
                     print(f"{prefix}{display_name}")
                 print()  # Blank line after each kind
         
-        # Print legend if there are any asterisks
+        # Print legend for visual indicators
         has_asterisks = any(
             any(extra_info.get('would_be_removed') or extra_info.get('system_only') 
                 for name, extra_info in packages)
             for packages in unified_packages.values()
         )
+        has_missing = any(
+            any(extra_info.get('not_installed') and not extra_info.get('would_be_removed')
+                for name, extra_info in packages)
+            for packages in unified_packages.values()
+        )
         
-        if has_asterisks:
-            file_basenames = [f.name for f in status_data['files_considered']]
-            print(f"{RED}* Items marked with asterisk would be removed (not declared in current scope: {', '.join(file_basenames)}){RESET}")
+        # Legend is now integrated with the issue summary in interactive mode
+        # Only show legend in non-interactive contexts (none currently)
+        if False:  # Placeholder for future non-interactive status commands
+            pass
+        
+        return has_asterisks, has_missing
+    
+    def _run_install(self, args):
+        """Runs install operation for interactive mode."""
+        files_to_apply = [self.brewfile] + self._resolve_include_files(args)
+        for brewfile_path in files_to_apply:
+            say(f"Applying → {brewfile_path}")
+            result = subprocess.run(
+                ["brew", "bundle", "--file", str(brewfile_path)],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode != 0:
+                if result.stdout:
+                    print(result.stdout)
+                if result.stderr:
+                    print(result.stderr, file=sys.stderr)
+                warn(f"Failed to apply {brewfile_path}")
+            else:
+                say(f"Successfully applied {brewfile_path}")
+    
+    def _run_cleanup(self, args, status_data):
+        """Runs cleanup operation for interactive mode."""
+        cleanup_packages = status_data['on_system_only']
+        
+        if not cleanup_packages:
+            say("Nothing to clean up.")
+            return
+        
+        file_basenames = [p.name for p in status_data['files_considered']]
+        say(f"Removing packages not declared in: {', '.join(file_basenames)}")
+        
+        with self._get_merged_brewfile_path(args) as merged_file_path:
+            result = subprocess.run(
+                ["brew", "bundle", "cleanup", "--file", str(merged_file_path), "--force"],
+                capture_output=False, text=True,
+            )
+            if result.returncode == 0:
+                say("Cleanup complete.")
+            else:
+                warn("Cleanup finished with errors.")
+    
+    def cmd_interactive(self, args):
+        """Interactive brewfile management - primary user interface."""
+        self._ensure_brew()
+        
+        # Use shared analysis method
+        status_data = self._analyze_package_status(args)
+        
+        # Create unified view
+        unified_packages = self._create_unified_package_view(status_data)
+        
+        # Print status view and get issue counts
+        has_asterisks, has_missing = self._print_status_view(status_data, unified_packages)
+        
+        # If no issues, just show status and exit
+        if not has_asterisks and not has_missing:
+            say("✓ System is fully synchronized with your Brewfile(s).")
+            return
+        
+        # Count issues for summary
+        asterisk_count = sum(
+            sum(1 for name, extra_info in packages 
+                if extra_info.get('would_be_removed') or extra_info.get('system_only'))
+            for packages in unified_packages.values()
+        )
+        missing_count = sum(
+            sum(1 for name, extra_info in packages 
+                if extra_info.get('not_installed') and not extra_info.get('would_be_removed'))
+            for packages in unified_packages.values()
+        )
+        
+        print(f"{YELLOW}Issues found:{RESET}")
+        if missing_count > 0:
+            print(f"  {YELLOW}!{RESET} {missing_count} package(s) need installation (declared but not installed)")
+        if asterisk_count > 0:
+            print(f"  {RED}*{RESET} {asterisk_count} package(s) would be removed (not in current scope)")
+        print()
+        
+        # Interactive menu
+        print("What would you like to do?")
+        print("  (1) Remove extra packages")
+        print("  (2) Install missing packages")
+        print("  (3) Sync both (install + remove)")
+        print("  (q) Quit")
+        
+        try:
+            choice = input("Enter your choice [q]: ").lower().strip()
+        except (EOFError, KeyboardInterrupt):
+            choice = "q"
             print()
+        
+        if choice == "1" and asterisk_count > 0:
+            say("Running cleanup...")
+            self._run_cleanup(args, status_data)
+        elif choice == "2" and missing_count > 0:
+            say("Running install...")
+            self._run_install(args)
+        elif choice == "3" and (asterisk_count > 0 or missing_count > 0):
+            say("Running sync (install + cleanup)...")
+            if missing_count > 0:
+                self._run_install(args)
+            if asterisk_count > 0:
+                self._run_cleanup(args, status_data)
+        elif choice == "1" and asterisk_count == 0:
+            warn("No extra packages to remove.")
+        elif choice == "2" and missing_count == 0:
+            warn("No missing packages to install.")
+        elif choice == "3" and asterisk_count == 0 and missing_count == 0:
+            warn("No packages need synchronization.")
+        elif choice in ["q", ""]:
+            say("Goodbye!")
+        else:
+            warn("Invalid choice.")
+    
 
     def cmd_edit(self, args):
         """Opens the Brewfile in the default editor."""
@@ -602,9 +657,6 @@ class BrewfileManager:
         say(f"Opening {self.brewfile} in {editor}...")
         subprocess.run([editor, str(self.brewfile)])
 
-    def cmd_path(self, args):
-        """Prints the path to the Brewfile(s)."""
-        print(self.brewfile)
 
     def cmd_add(self, args):
         """Installs a package and adds it to a Brewfile."""
@@ -703,57 +755,67 @@ def main():
     """Main function and argument parser."""
     manager = BrewfileManager()
     parser = argparse.ArgumentParser(
-        description="A Python-based manager for Brewfile dependencies.",
+        description="Interactive Brewfile manager - the modern way to manage Homebrew dependencies.",
         formatter_class=argparse.RawTextHelpFormatter,
     )
-    subparsers = parser.add_subparsers(
-        dest="command", required=True, help="Available commands"
+    
+    # Add top-level flags for the primary interactive interface
+    parser.add_argument(
+        "--include",
+        type=str,
+        help="Include Brewfile.NAME (comma-separated for multiple).",
     )
-    commands = {
-        "install": "Install all dependencies from the Brewfile(s).",
-        "cleanup": "Preview or apply removals of unlisted packages.",
-        "status": "Show status of all dependencies from Brewfile(s) and compare with system state.",
-        "sync": "Run 'install' then 'cleanup' to fully synchronize the system.",
-        "dump": "Update Brewfile from current system.",
-        "edit": "Open Brewfile in $EDITOR.",
-        "path": "Print path(s) to Brewfile(s).",
-        "add": "Install a package and add it to a Brewfile.",
-        "remove": "Remove a package from a Brewfile interactively.",
-    }
-    for cmd, help_text in commands.items():
-        subparser = subparsers.add_parser(cmd, help=help_text)
-        subparser.add_argument(
-            "--include",
-            type=str,
-            help="Include Brewfile.NAME (comma-separated for multiple).",
-        )
-        subparser.add_argument(
-            "--all", action="store_true", help="Include all Brewfile.* files."
-        )
-        if cmd == "dump":
-            subparser.add_argument(
-                "--force", action="store_true", help="Force overwrite of Brewfile(s)."
-            )
-        if cmd == "add":
-            subparser.add_argument(
-                "package_name", help="The name of the package to add."
-            )
-            subparser.add_argument(
-                "--to",
-                type=str,
-                help="Short name of the Brewfile to add to (e.g., 'extra').",
-            )
-        if cmd == "remove":
-            subparser.add_argument(
-                "package_name", help="The name of the package to remove."
-            )
+    parser.add_argument(
+        "--all", action="store_true", help="Include all Brewfile.* files."
+    )
+    
+    # Add essential utility subcommands
+    subparsers = parser.add_subparsers(
+        dest="command", required=False, help="Utility commands"
+    )
+    
+    # Add package command
+    add_parser = subparsers.add_parser("add", help="Install and add a package to a Brewfile")
+    add_parser.add_argument("package_name", help="The name of the package to add")
+    add_parser.add_argument(
+        "--to",
+        type=str,
+        help="Short name of the Brewfile to add to (e.g., 'extra')",
+    )
+    
+    # Remove package command
+    remove_parser = subparsers.add_parser("remove", help="Remove a package from a Brewfile interactively")
+    remove_parser.add_argument("package_name", help="The name of the package to remove")
+    
+    # Edit command
+    subparsers.add_parser("edit", help="Open Brewfile in $EDITOR")
+    
+    # Dump command
+    dump_parser = subparsers.add_parser("dump", help="Update Brewfile from current system")
+    dump_parser.add_argument(
+        "--include",
+        type=str,
+        help="Include Brewfile.NAME (comma-separated for multiple)",
+    )
+    dump_parser.add_argument(
+        "--all", action="store_true", help="Include all Brewfile.* files"
+    )
+    dump_parser.add_argument(
+        "--force", action="store_true", help="Force overwrite of Brewfile(s)"
+    )
 
     args = parser.parse_args()
-    command_func = getattr(manager, f"cmd_{args.command}", None)
-    if command_func:
-        command_func(args)
+    
+    # If no subcommand specified, run interactive mode (primary interface)
+    if args.command is None:
+        manager.cmd_interactive(args)
     else:
-        die(f"Unknown command: {args.command}")
+        # Run the specified utility command
+        command_func = getattr(manager, f"cmd_{args.command}", None)
+        if command_func:
+            command_func(args)
+        else:
+            die(f"Unknown command: {args.command}")
 
 
 if __name__ == "__main__":
