@@ -1,0 +1,60 @@
+{
+  "version": "1.0",
+  "packages": {
+    "core": {
+      "taps": [
+        "homebrew/autoupdate"
+      ],
+      "brews": [
+        "stow",
+        "bat",
+        "fd",
+        "fzf",
+        "ripgrep",
+        "starship",
+        "tree",
+        "zoxide",
+        "zsh-autosuggestions",
+        "zsh-syntax-highlighting"
+      ],
+      "casks": [
+        "font-monaspace",
+        "warp"
+      ]
+    },
+    "dev": {
+      "brews": [
+        "uv",
+        "python@3.13",
+        "node",
+        "pnpm",
+        "gemini-cli",
+        "gh",
+        "neovim",
+        "curlie"
+      ],
+      "casks": [
+        "ghostty",
+        "github",
+        "obsidian"
+      ]
+    },
+    "personal": {
+      "casks": [
+        "caffeine",
+        "epic-games",
+        "steam",
+        "logi-options+",
+        "zed",
+        "mos"
+      ]
+    }
+  },
+  "machines": {
+    "OSXLT3QF7WY": [
+      "core",
+      "dev",
+      "personal"
+    ]
+  }
+}

@@ -73,8 +73,8 @@ class BootstrapOrchestrator:
         return shutil.which("stow") is not None
     
     def _check_brewfile_available(self):
-        """Check if brewfile utility is deployed and working."""
-        brewfile_path = self.repo_dir / "home" / ".local" / "bin" / "brewfile"
+        """Check if brewfile utility is available."""
+        brewfile_path = self.repo_dir / "brewfile.py"
         return brewfile_path.exists()
     
     def _check_dotfiles_available(self):
@@ -93,11 +93,9 @@ class BootstrapOrchestrator:
             }
         
         try:
-            # Run brewfile to check for issues
-            # We'll parse the output to determine if there are issues
+            # Run brewfile status to check for issues
             result = subprocess.run(
-                [sys.executable, str(self.repo_dir / "brewfile.py"), "--all"],
-                input="q\n",  # Immediately quit to just get status
+                [sys.executable, str(self.repo_dir / "brewfile.py"), "status"],
                 capture_output=True,
                 text=True,
                 cwd=self.repo_dir
@@ -107,22 +105,22 @@ class BootstrapOrchestrator:
             
             # Parse output to find issues
             has_missing = "need installation" in output
-            has_extra = "would be removed" in output
+            has_extra = "not in current config" in output
             
             # Count issues if we can parse them
             missing_count = 0
             extra_count = 0
             
             for line in output.split('\n'):
-                if "need installation" in line:
-                    # Extract number from line like "! 5 package(s) need installation"
+                if "package(s) need installation" in line:
+                    # Extract number from line like "! 3 package(s) need installation"
                     parts = line.split()
                     for i, part in enumerate(parts):
                         if part.isdigit():
                             missing_count = int(part)
                             break
-                elif "would be removed" in line:
-                    # Extract number from line like "* 10 package(s) would be removed"
+                elif "extra package(s) not in current config" in line:
+                    # Extract number from line like "* 6 extra package(s) not in current config"
                     parts = line.split()
                     for i, part in enumerate(parts):
                         if part.isdigit():
@@ -232,7 +230,7 @@ class BootstrapOrchestrator:
         
         # Check utilities
         if self._check_brewfile_available():
-            print(f"  ✓ Package management utility deployed")
+            print(f"  ✓ Package management utility available")
         else:
             print(f"  ! Package management utility missing")
         
@@ -247,7 +245,7 @@ class BootstrapOrchestrator:
         """Launch the interactive brewfile tool."""
         try:
             say("Launching package management...")
-            brewfile_cmd = [sys.executable, str(self.repo_dir / "brewfile.py"), "--all"]
+            brewfile_cmd = [sys.executable, str(self.repo_dir / "brewfile.py")]
             result = subprocess.run(brewfile_cmd, cwd=self.repo_dir)
             return result.returncode == 0
         except (subprocess.CalledProcessError, FileNotFoundError) as e:
@@ -280,7 +278,7 @@ class BootstrapOrchestrator:
                     print(f"  ! {missing} package(s) need installation")
                 if extra > 0:
                     print(f"  * {extra} package(s) would be removed (not in current scope)")
-                print(f"  → Run 'python3 brewfile.py --all' for interactive management")
+                print(f"  → Run 'python3 brewfile.py' for interactive management")
             else:
                 print(f"  ✓ All packages properly managed")
         else:
