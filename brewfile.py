@@ -50,7 +50,8 @@ class BrewfileManager:
 
     def __init__(self):
         self.repo_dir = self._resolve_repo_dir()
-        self.brewfile = self.repo_dir / "Brewfile"
+        self.packages_dir = self.repo_dir / "packages"
+        self.brewfile = self.packages_dir / "Brewfile"
 
     # --- Helper Methods ---
 
@@ -76,14 +77,14 @@ class BrewfileManager:
         """Resolves and returns a list of include files based on args."""
         include_files = []
         if args.all:
-            for path in sorted(self.repo_dir.glob("Brewfile.*")):
+            for path in sorted(self.packages_dir.glob("Brewfile.*")):
                 if path.is_file():
                     include_files.append(path)
         elif args.include:
             names = args.include.split(",")
             for name in names:
                 if name:
-                    f = self.repo_dir / f"Brewfile.{name}"
+                    f = self.packages_dir / f"Brewfile.{name}"
                     if f.is_file():
                         include_files.append(f)
         return include_files
@@ -154,7 +155,7 @@ class BrewfileManager:
 
         # Collect ALL Brewfiles (for cross-reference in cleanup)
         all_brewfiles = {}
-        for brewfile_path in sorted(self.repo_dir.glob("Brewfile*")):
+        for brewfile_path in sorted(self.packages_dir.glob("Brewfile*")):
             if brewfile_path.is_file():
                 all_brewfiles[brewfile_path] = []
                 if brewfile_path.exists():
@@ -404,7 +405,7 @@ class BrewfileManager:
 
         # Find existing Brewfile.* files
         counter = 2
-        for brewfile_path in sorted(self.repo_dir.glob("Brewfile.*")):
+        for brewfile_path in sorted(self.packages_dir.glob("Brewfile.*")):
             if brewfile_path.is_file():
                 short_name = brewfile_path.name.replace("Brewfile.", "")
                 available_brewfiles.append((str(counter), short_name, brewfile_path))
@@ -435,7 +436,7 @@ class BrewfileManager:
                 warn("Invalid Brewfile name.")
                 return
 
-            target_file = self.repo_dir / f"Brewfile.{new_name}"
+            target_file = self.packages_dir / f"Brewfile.{new_name}"
             target_name = new_name
         else:
             # Find selected Brewfile
@@ -556,9 +557,9 @@ class BrewfileManager:
         package_name = args.package_name
         target_file = self.brewfile
         if args.to:
-            target_file = self.repo_dir / f"Brewfile.{args.to}"
+            target_file = self.packages_dir / f"Brewfile.{args.to}"
         say(f"Adding '{package_name}' to {target_file.name}...")
-        all_files = [self.brewfile] + list(self.repo_dir.glob("Brewfile.*"))
+        all_files = [self.brewfile] + list(self.packages_dir.glob("Brewfile.*"))
         for file in all_files:
             if file.exists() and package_name in file.read_text():
                 warn(f"Package '{package_name}' already found in {file.name}.")
@@ -590,7 +591,7 @@ class BrewfileManager:
         """Finds a package in a Brewfile and interactively removes it."""
         self._ensure_brew()
         package_name = args.package_name
-        all_managed_files = [self.brewfile] + list(self.repo_dir.glob("Brewfile.*"))
+        all_managed_files = [self.brewfile] + list(self.packages_dir.glob("Brewfile.*"))
         found_file = None
         line_to_remove = None
         package_re = re.compile(
