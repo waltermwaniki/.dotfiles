@@ -2,7 +2,9 @@
   "version": "1.0",
   "packages": {
     "core": {
-      "taps": ["homebrew/autoupdate"],
+      "taps": [
+        "homebrew/autoupdate"
+      ],
       "brews": [
         "stow",
         "mas",
@@ -17,7 +19,13 @@
         "ripgrep",
         "tree"
       ],
-      "casks": ["google-chrome", "obsidian", "font-monaspace", "ghostty"]
+      "casks": [
+        "google-chrome",
+        "obsidian",
+        "font-monaspace",
+        "ghostty"
+      ],
+      "mas": []
     },
     "dev": {
       "taps": [],
@@ -30,17 +38,68 @@
         "gh",
         "neovim"
       ],
-      "casks": ["warp", "zed", "tableplus", "postman"]
+      "casks": [
+        "warp",
+        "zed",
+        "tableplus",
+        "postman"
+      ],
+      "mas": []
     },
     "mac-utils": {
+      "taps": [],
       "brews": [],
-      "casks": ["mos", "logi-options+", "caffeine"]
+      "casks": [
+        "mos",
+        "logi-options+",
+        "caffeine"
+      ],
+      "mas": []
     },
     "gaming": {
-      "casks": ["epic-games", "steam"]
+      "taps": [],
+      "brews": [],
+      "casks": [
+        "epic-games",
+        "steam"
+      ],
+      "mas": []
+    },
+    "OSXLT3QF7WY": {
+      "taps": [],
+      "brews": [
+        "libusb",
+        "xz"
+      ],
+      "casks": [
+        "iterm2",
+        "pycharm",
+        "rectangle",
+        "github",
+        "epic-games",
+        "hiddenbar",
+        "steam"
+      ],
+      "mas": [
+        "iMovie",
+        "Numbers",
+        "Noir",
+        "Microsoft OneNote",
+        "Pages",
+        "Windows App",
+        "Keynote",
+        "GarageBand",
+        "Microsoft Outlook",
+        "Goodnotes"
+      ]
     }
   },
   "machines": {
-    "OSXLT3QF7WY": ["core", "dev"]
+    "OSXLT3QF7WY": [
+      "core",
+      "dev",
+      "mac-utils",
+      "OSXLT3QF7WY"
+    ]
   }
 }

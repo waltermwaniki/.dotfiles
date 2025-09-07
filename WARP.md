@@ -13,7 +13,8 @@ This is a **dotfiles repository** that uses **GNU Stow** for symlink management.
 - **`brewfile.py`** - Source for the brewfile utility (deployed by bootstrap on macOS)
 - **`aptfile.py`** - Source for the aptfile utility (deployed by bootstrap on Linux)
 - **`bootstrap.sh`** - Legacy Bash bootstrap script
-- **`Brewfile`** + **`Brewfile.extra`** - Homebrew package management via Bundle (macOS)
+- **`~/.config/brewfile/config.json`** - Modern JSON-based package configuration (macOS)
+- **`~/Brewfile`** - Generated Brewfile for brew bundle (macOS)
 - **`Aptfile`** + **`Dnffile`** - Linux package management for Ubuntu and Rocky Linux
 - **`home/.local/bin/brewfile`** - Modern Python-based Brewfile manager (macOS)
 - **`home/.local/bin/aptfile`** - Modern Python-based Linux package manager (Linux)
@@ -75,18 +76,14 @@ cd "$HOME/.dotfiles"
 Use the deployed `brewfile` utility for package management:
 
 ```bash
-brewfile install                    # Install all packages
-brewfile install --include extra    # Include Brewfile.extra
-brewfile status                     # Show dependencies with install status
-brewfile status --include extra     # Include extra files
-brewfile sync                       # Install + cleanup in one command (includes extra by default)
-brewfile dump                       # Update Brewfile from system (append)
-brewfile dump --force               # Overwrite Brewfile completely
-brewfile cleanup                    # Interactive cleanup of unused packages (includes extra by default)
-brewfile add <package>              # Install and add package to Brewfile
-brewfile add <package> --to extra   # Add to Brewfile.extra
-brewfile remove <package>           # Interactive removal from Brewfile
-brewfile edit                       # Open Brewfile in $EDITOR
+brewfile status                     # Show package status and what needs to be installed/removed
+brewfile install                    # Install missing packages (interactive)
+brewfile cleanup                    # Remove extra packages (interactive)
+brewfile sync                       # Install missing + remove extra packages (interactive)
+brewfile add <package>              # Install and add package to configuration
+brewfile remove <package>           # Remove package from configuration
+brewfile init                       # Initialize configuration for new machine
+brewfile generate                   # Generate ~/Brewfile from configuration
 ```
 
 #### Linux (apt/dnf/yum)
@@ -153,15 +150,16 @@ The repository includes a sophisticated Brewfile management system:
 ### Recommended Workflows
 ```bash
 # Daily workflow
-brewfile status --include extra     # Check status of all packages
-brewfile sync                       # Install missing + remove unused (includes extra by default)
+brewfile status                     # Check status of all packages and groups
+brewfile sync                       # Install missing + remove extra packages (interactive)
 
 # Adding new packages
-brewfile add neovim                 # Install and add to main Brewfile
-brewfile add steam --to extra       # Install and add to Brewfile.extra
+brewfile add neovim                 # Install and add to machine configuration
+brewfile add steam                  # Automatically placed in appropriate group
 
 # Maintenance
-brewfile cleanup                    # Interactive cleanup with confirmation (includes extra by default)
+brewfile cleanup                    # Interactive cleanup with confirmation
+brewfile generate                   # Regenerate ~/Brewfile from JSON config
 ```
 
 ## File Organization Logic
@@ -186,9 +184,9 @@ Shell configurations are modular:
 3. Apply with `stow -v -t "$HOME" home`
 
 ### When Adding New Packages
-1. Install normally: `brew install <package>`
-2. Update Brewfile: `brewfile dump --include extra` (appends to Brewfile.extra)
-3. Or for main packages: `brewfile dump` (appends to main Brewfile)
+1. Use brewfile: `brewfile add <package>` (automatically installs and adds to config)
+2. Or install normally: `brew install <package>`, then `brewfile adopt` to add to config
+3. Run `brewfile generate` to update ~/Brewfile from the JSON configuration
 
 ### When Modifying Brewfile Utility
 1. Edit the source file: `brewfile.py` in the repository root
@@ -196,7 +194,7 @@ Shell configurations are modular:
 3. Deploy to dotfiles: `./bootstrap.py` will copy `brewfile.py` → `home/.local/bin/brewfile`
 
 ### System Maintenance
-- Use `brewfile cleanup --include extra` regularly to identify unused packages
+- Use `brewfile cleanup` regularly to identify unused packages
 - The bootstrap script handles cross-platform Stow installation automatically
 - Brewfile management supports both incremental updates and complete rebuilds
 

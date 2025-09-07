@@ -72,6 +72,96 @@ class BootstrapOrchestrator:
         """Check if GNU Stow is installed."""
         return shutil.which("stow") is not None
     
+    def _check_mas_installed(self):
+        """Check if mas (Mac App Store CLI) is installed."""
+        return shutil.which("mas") is not None
+    
+    def _check_mas_signed_in(self):
+        """Check if user is signed into Mac App Store via mas."""
+        if not self._check_mas_installed():
+            return False, None
+            
+        try:
+            # First try 'mas account' (works on older macOS versions)
+            result = subprocess.run(['mas', 'account'], capture_output=True, text=True, timeout=5)
+            if result.returncode == 0 and result.stdout.strip():
+                return True, result.stdout.strip()  # Returns email
+            
+            # If 'mas account' fails, try 'mas list' as a sign-in check
+            # If user is signed in, this should work; if not, it may fail
+            result = subprocess.run(['mas', 'list'], capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                # mas list works, user is probably signed in, but we don't have email
+                return True, "signed in (email unavailable)"
+            
+            return False, None
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+            return False, None
+    
+    def _install_foundational_tools(self):
+        """Install foundational tools needed for full functionality."""
+        if not self._check_homebrew_installed():
+            error("Homebrew is required to install foundational tools")
+            return False
+        
+        foundational_tools = [
+            ("stow", "GNU Stow (required for dotfiles management)"),
+            ("mas", "Mac App Store CLI (for App Store apps)")
+        ]
+        
+        installed_any = False
+        for tool, description in foundational_tools:
+            if not shutil.which(tool):
+                say(f"Installing {description}...")
+                try:
+                    result = subprocess.run(["brew", "install", tool], 
+                                          capture_output=True, text=True, check=True)
+                    success(f"{tool} installed successfully")
+                    installed_any = True
+                except subprocess.CalledProcessError as e:
+                    warn(f"Failed to install {tool}: {e.stderr if e.stderr else str(e)}")
+                    if tool == "stow":
+                        warn("GNU Stow is recommended for dotfiles management")
+            else:
+                say(f"{tool} already installed")
+        
+        return True
+    
+    def _prompt_mas_signin_if_needed(self):
+        """Guide user through App Store sign-in if needed."""
+        if not self._check_mas_installed():
+            return  # mas not installed, skip
+        
+        signed_in, account = self._check_mas_signed_in()
+        if signed_in:
+            return  # Already signed in, no action needed
+        
+        warn("Not signed into Mac App Store")
+        say("To manage App Store apps, please:")
+        say("  1. Open the App Store application")
+        say("  2. Sign in with your Apple ID") 
+        say("  3. Run 'mas account' to verify, or restart this bootstrap")
+        say("")
+        say("You can continue without App Store sign-in (other features will work)")
+        
+        # Don't block the process, just inform
+    
+    def _install_and_setup_tools(self):
+        """Install foundational tools and check mas sign-in status."""
+        say("Setting up foundational tools...")
+        
+        if not self._install_foundational_tools():
+            error("Failed to install foundational tools")
+            return False
+        
+        # Check mas sign-in status and provide guidance
+        self._prompt_mas_signin_if_needed()
+        
+        success("Foundational tools setup complete!")
+        say("You can now use package and dotfiles management features.")
+        
+        return True
+    
     def _check_brewfile_available(self):
         """Check if brewfile utility is available."""
         brewfile_path = self.repo_dir / "brewfile.py"
@@ -128,6 +218,27 @@ class BootstrapOrchestrator:
             print(f"  ! Package manager missing (install Homebrew first)")
             return False
         print(f"  ✓ Package manager installed (Homebrew)")
+        
+        # Check foundational tools status
+        needs_install = []
+        if not self._check_stow_installed():
+            needs_install.append("stow")
+        if not self._check_mas_installed():
+            needs_install.append("mas")
+        
+        if needs_install:
+            print(f"  ! Foundational tools missing: {', '.join(needs_install)}")
+            print(f"  → Add '(0) Install foundational tools' option to menu")
+        else:
+            print(f"  ✓ Foundational tools installed (stow, mas)")
+        
+        # Check mas sign-in status
+        if self._check_mas_installed():
+            signed_in, account = self._check_mas_signed_in()
+            if signed_in:
+                print(f"  ✓ App Store management ready ({account})")
+            else:
+                print(f"  ! App Store management available (sign-in needed)")
         
         # Check package management
         if self._is_brewfile_functional():
@@ -214,6 +325,19 @@ class BootstrapOrchestrator:
         print(f"\nWhat would you like to manage?")
         menu_options = []
         option_num = 1
+        
+        # Check if foundational tools need installation
+        needs_install = []
+        if not self._check_stow_installed():
+            needs_install.append("stow")
+        if not self._check_mas_installed():
+            needs_install.append("mas")
+        
+        # Offer foundational tools installation if needed
+        if needs_install:
+            print(f"  ({option_num}) Install foundational tools ({', '.join(needs_install)})")
+            menu_options.append(('install_tools', self._install_and_setup_tools))
+            option_num += 1
         
         # Always offer package management if brewfile is functional
         if self._is_brewfile_functional():
