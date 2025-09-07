@@ -231,20 +231,6 @@ class BrewfileConfig:
         if config_file:
             self.save(config_file)
 
-    def add_packages_to_group(
-        self, group_name: str, packages: list[tuple[str, str]], config_file: Optional[Path] = None
-    ) -> None:
-        """Add multiple packages to a specific group and auto-save. Packages format: [(package_type, package_name), ...]"""
-        self.ensure_group_exists(group_name)
-        group = self.packages[group_name]
-
-        for package_type, package_name in packages:
-            group.add_package(package_type, package_name)
-
-        # Auto-save if config_file provided
-        if config_file:
-            self.save(config_file)
-
     def remove_package_from_groups(
         self, package_name: str, package_type: str, config_file: Optional[Path] = None
     ) -> list[str]:
@@ -394,14 +380,6 @@ class PackageAnalyzer:
         except subprocess.CalledProcessError:
             # If brew bundle list fails, fall back to empty
             return {"taps": [], "brews": [], "casks": [], "mas": []}
-
-    def check_brewfile_status(self) -> bool:
-        """Check if all Brewfile dependencies are satisfied using brew bundle check."""
-        try:
-            _ = subprocess.run(["brew", "bundle", "check"], capture_output=True, text=True, check=True)
-            return True  # Exit code 0 means everything is satisfied
-        except subprocess.CalledProcessError:
-            return False  # Exit code 1 means something is missing
 
     def get_missing_packages(self, configured_packages: list[PackageInfo]) -> dict[str, list[str]]:
         """Get packages that are configured but not installed."""
