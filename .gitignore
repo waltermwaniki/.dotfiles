@@ -5,3 +5,4 @@
 __pycache__/
 *.pyc
 .bootstrap.state.json
+Brewfile

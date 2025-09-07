@@ -11,7 +11,6 @@ import os
 import shutil
 import subprocess
 import sys
-from collections import defaultdict
 from pathlib import Path
 
 # ANSI colors (respect NO_COLOR and non-TTY)
@@ -66,7 +65,7 @@ class LinuxPackageManager:
         except NameError:
             return Path.cwd()
 
-    def _detect_package_manager(self):
+    def _detect_package_manager(self) -> tuple[str, Path]:
         """Detect available package manager and corresponding package file."""
         if shutil.which("apt"):
             return "apt", self.repo_dir / "Aptfile"
@@ -76,17 +75,18 @@ class LinuxPackageManager:
             return "yum", self.repo_dir / "Dnffile"  # Use same file as dnf
         else:
             die("No supported package manager found (apt, dnf, yum)")
+            return "None", Path()  # Unreachable
 
     def _read_package_file(self, file_path):
         """Read packages from package file, ignoring comments and empty lines."""
         if not file_path.exists():
             return []
-        
+
         packages = []
-        with open(file_path, 'r') as f:
+        with open(file_path, "r") as f:
             for line in f:
                 line = line.strip()
-                if line and not line.startswith('#'):
+                if line and not line.startswith("#"):
                     packages.append(line)
         return packages
 
@@ -94,17 +94,11 @@ class LinuxPackageManager:
         """Check if a package is installed."""
         try:
             if self.pkg_manager == "apt":
-                result = subprocess.run(
-                    ["dpkg", "-l", package], 
-                    capture_output=True, 
-                    check=False
-                )
+                result = subprocess.run(["dpkg", "-l", package], capture_output=True, check=False)
                 return result.returncode == 0
             elif self.pkg_manager in ["dnf", "yum"]:
                 result = subprocess.run(
-                    [self.pkg_manager, "list", "installed", package], 
-                    capture_output=True, 
-                    check=False
+                    [self.pkg_manager, "list", "installed", package], capture_output=True, check=False
                 )
                 return result.returncode == 0
         except FileNotFoundError:
@@ -119,7 +113,7 @@ class LinuxPackageManager:
             return
 
         say(f"Installing packages from {self.pkg_file.name}...")
-        
+
         try:
             if self.pkg_manager == "apt":
                 # Update package lists first
@@ -127,13 +121,13 @@ class LinuxPackageManager:
                 subprocess.run(["sudo", "apt", "install", "-y"] + packages, check=True)
             elif self.pkg_manager in ["dnf", "yum"]:
                 subprocess.run(["sudo", self.pkg_manager, "install", "-y"] + packages, check=True)
-            
+
             success("All packages installed successfully.")
-            
+
         except subprocess.CalledProcessError as e:
             error(f"Failed to install packages: {e}")
             return False
-        
+
         return True
 
     def cmd_status(self, args):
@@ -144,10 +138,10 @@ class LinuxPackageManager:
             return
 
         say(f"Checking package status from {self.pkg_file.name}...")
-        
+
         installed = []
         missing = []
-        
+
         for package in packages:
             if self._is_package_installed(package):
                 installed.append(package)
@@ -158,20 +152,20 @@ class LinuxPackageManager:
         if installed:
             installed_display = ", ".join(installed)
             print(f"  installed ({len(installed)}): {installed_display}")
-        
+
         if missing:
             missing_display = ", ".join([f"{pkg} {YELLOW}(not installed){RESET}" for pkg in missing])
             print(f"  missing ({len(missing)}): {missing_display}")
-        
+
         if not missing:
             print("  ✓ All packages are installed.")
-        
+
         return True
 
     def cmd_add(self, args):
         """Add a package to the package file and install it."""
         package_name = args.package_name
-        
+
         # Check if package is already in file
         packages = self._read_package_file(self.pkg_file)
         if package_name in packages:
@@ -179,7 +173,7 @@ class LinuxPackageManager:
             return True
 
         say(f"Adding '{package_name}' to {self.pkg_file.name}...")
-        
+
         # Install the package first
         try:
             if self.pkg_manager == "apt":
@@ -191,16 +185,16 @@ class LinuxPackageManager:
             return False
 
         # Add to package file
-        with open(self.pkg_file, 'a') as f:
+        with open(self.pkg_file, "a") as f:
             f.write(f"{package_name}\n")
-        
+
         success(f"Successfully added and installed '{package_name}'.")
         return True
 
     def cmd_remove(self, args):
         """Remove a package from the package file and optionally uninstall it."""
         package_name = args.package_name
-        
+
         # Check if package is in file
         packages = self._read_package_file(self.pkg_file)
         if package_name not in packages:
@@ -212,7 +206,7 @@ class LinuxPackageManager:
         print("  (1) Uninstall package and remove from file")
         print("  (2) Remove from file only")
         print("  (3) Cancel")
-        
+
         try:
             response = input("Enter your choice [3]: ")
         except (EOFError, KeyboardInterrupt):
@@ -220,7 +214,7 @@ class LinuxPackageManager:
             print()
 
         choice = response.lower().strip()
-        
+
         if choice == "1":
             # Uninstall package
             try:
@@ -236,14 +230,14 @@ class LinuxPackageManager:
         if choice in ["1", "2"]:
             # Remove from file
             updated_packages = [pkg for pkg in packages if pkg != package_name]
-            with open(self.pkg_file, 'w') as f:
+            with open(self.pkg_file, "w") as f:
                 f.write("# Package file managed by aptfile\n")
                 for pkg in updated_packages:
                     f.write(f"{pkg}\n")
             success(f"Removed '{package_name}' from {self.pkg_file.name}")
         else:
             say("Cancelled.")
-        
+
         return True
 
     def cmd_edit(self, args):
@@ -263,37 +257,31 @@ def main():
         description="A Linux package manager for Aptfile and Dnffile dependencies.",
         formatter_class=argparse.RawTextHelpFormatter,
     )
-    
-    subparsers = parser.add_subparsers(
-        dest="command", required=True, help="Available commands"
-    )
-    
+
+    subparsers = parser.add_subparsers(dest="command", required=True, help="Available commands")
+
     commands = {
         "install": "Install all packages from the package file.",
         "status": "Show status of all packages and compare with system state.",
-        "add": "Install a package and add it to the package file.", 
+        "add": "Install a package and add it to the package file.",
         "remove": "Remove a package from the package file interactively.",
         "edit": "Open package file in $EDITOR.",
         "path": "Print path to the package file.",
     }
-    
+
     for cmd, help_text in commands.items():
         subparser = subparsers.add_parser(cmd, help=help_text)
-        
+
         if cmd == "add":
-            subparser.add_argument(
-                "package_name", help="The name of the package to add."
-            )
+            subparser.add_argument("package_name", help="The name of the package to add.")
         if cmd == "remove":
-            subparser.add_argument(
-                "package_name", help="The name of the package to remove."
-            )
+            subparser.add_argument("package_name", help="The name of the package to remove.")
 
     args = parser.parse_args()
-    
+
     manager = LinuxPackageManager()
     command_func = getattr(manager, f"cmd_{args.command}", None)
-    
+
     if command_func:
         success = command_func(args)
         sys.exit(0 if success else 1)

@@ -42,7 +42,8 @@
         "warp",
         "zed",
         "tableplus",
-        "postman"
+        "postman",
+	"visual-studio-code"
       ],
       "mas": []
     },
@@ -81,16 +82,16 @@
         "steam"
       ],
       "mas": [
-        "iMovie",
-        "Numbers",
-        "Noir",
-        "Microsoft OneNote",
-        "Pages",
-        "Windows App",
-        "Keynote",
-        "GarageBand",
-        "Microsoft Outlook",
-        "Goodnotes"
+        "GarageBand::682658836",
+        "Goodnotes::1444383602",
+        "iMovie::408981434",
+        "Keynote::409183694",
+        "Microsoft OneNote::784801555",
+        "Microsoft Outlook::985367838",
+        "Noir::1592917505",
+        "Numbers::409203825",
+        "Pages::409201541",
+        "Windows App::1295203466"
       ]
     }
   },

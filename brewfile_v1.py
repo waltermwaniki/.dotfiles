@@ -9,14 +9,13 @@ while leveraging brew bundle for all actual package operations.
 
 import json
 import os
-import shutil
 import socket
 import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Set, Tuple, Optional, Any
+from typing import Any
 
 # ANSI colors (respect NO_COLOR and non-TTY)
 BLUE = "\033[1;34m"
@@ -59,32 +58,33 @@ def die(msg: str) -> None:
 @dataclass
 class PackageGroup:
     """Represents a group of packages with taps, brews, casks, and mas apps."""
-    taps: List[str] = field(default_factory=list)
-    brews: List[str] = field(default_factory=list)
-    casks: List[str] = field(default_factory=list)
-    mas: List[str] = field(default_factory=list)
 
-    def get_all_packages(self) -> Dict[str, List[str]]:
+    taps: list[str] = field(default_factory=list)
+    brews: list[str] = field(default_factory=list)
+    casks: list[str] = field(default_factory=list)
+    mas: list[str] = field(default_factory=list)
+
+    def get_all_packages(self) -> dict[str, list[str]]:
         """Get all packages as a dictionary."""
         return {
-            'taps': self.taps.copy(),
-            'brews': self.brews.copy(),
-            'casks': self.casks.copy(),
-            'mas': self.mas.copy()
+            "taps": self.taps.copy(),
+            "brews": self.brews.copy(),
+            "casks": self.casks.copy(),
+            "mas": self.mas.copy(),
         }
 
     def add_package(self, package_type: str, package_name: str) -> None:
         """Add a package to this group."""
-        if package_type == 'taps':
+        if package_type == "taps":
             if package_name not in self.taps:
                 self.taps.append(package_name)
-        elif package_type == 'brews':
+        elif package_type == "brews":
             if package_name not in self.brews:
                 self.brews.append(package_name)
-        elif package_type == 'casks':
+        elif package_type == "casks":
             if package_name not in self.casks:
                 self.casks.append(package_name)
-        elif package_type == 'mas':
+        elif package_type == "mas":
             if package_name not in self.mas:
                 self.mas.append(package_name)
         else:
@@ -92,16 +92,16 @@ class PackageGroup:
 
     def remove_package(self, package_type: str, package_name: str) -> bool:
         """Remove a package from this group. Returns True if removed."""
-        if package_type == 'taps' and package_name in self.taps:
+        if package_type == "taps" and package_name in self.taps:
             self.taps.remove(package_name)
             return True
-        elif package_type == 'brews' and package_name in self.brews:
+        elif package_type == "brews" and package_name in self.brews:
             self.brews.remove(package_name)
             return True
-        elif package_type == 'casks' and package_name in self.casks:
+        elif package_type == "casks" and package_name in self.casks:
             self.casks.remove(package_name)
             return True
-        elif package_type == 'mas' and package_name in self.mas:
+        elif package_type == "mas" and package_name in self.mas:
             self.mas.remove(package_name)
             return True
         return False
@@ -110,6 +110,7 @@ class PackageGroup:
 @dataclass
 class PackageStatus:
     """Status information for a package."""
+
     name: str
     group: str
     package_type: str  # 'tap', 'brew', 'cask'
@@ -119,47 +120,40 @@ class PackageStatus:
 @dataclass
 class BrewfileConfig:
     """Complete brewfile configuration."""
+
     version: str = "1.0"
-    packages: Dict[str, PackageGroup] = field(default_factory=dict)
-    machines: Dict[str, List[str]] = field(default_factory=dict)  # hostname -> group names
+    packages: dict[str, PackageGroup] = field(default_factory=dict)
+    machines: dict[str, list[str]] = field(default_factory=dict)  # hostname -> group names
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'BrewfileConfig':
+    def from_dict(cls, data: dict[str, Any]) -> "BrewfileConfig":
         """Create config from dictionary (loaded JSON)."""
         # Convert package groups from dict to PackageGroup objects
         packages = {}
-        for name, pkg_data in data.get('packages', {}).items():
+        for name, pkg_data in data.get("packages", {}).items():
             packages[name] = PackageGroup(
-                taps=pkg_data.get('taps', []),
-                brews=pkg_data.get('brews', []),
-                casks=pkg_data.get('casks', []),
-                mas=pkg_data.get('mas', [])
+                taps=pkg_data.get("taps", []),
+                brews=pkg_data.get("brews", []),
+                casks=pkg_data.get("casks", []),
+                mas=pkg_data.get("mas", []),
             )
 
-        return cls(
-            version=data.get('version', '1.0'),
-            packages=packages,
-            machines=data.get('machines', {})
-        )
+        return cls(version=data.get("version", "1.0"), packages=packages, machines=data.get("machines", {}))
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert config to dictionary for JSON serialization."""
         packages_dict = {}
         for name, pkg_group in self.packages.items():
             packages_dict[name] = {
-                'taps': pkg_group.taps,
-                'brews': pkg_group.brews,
-                'casks': pkg_group.casks,
-                'mas': pkg_group.mas
+                "taps": pkg_group.taps,
+                "brews": pkg_group.brews,
+                "casks": pkg_group.casks,
+                "mas": pkg_group.mas,
             }
 
-        return {
-            'version': self.version,
-            'packages': packages_dict,
-            'machines': self.machines
-        }
+        return {"version": self.version, "packages": packages_dict, "machines": self.machines}
 
-    def get_machine_groups(self, machine_name: str) -> List[str]:
+    def get_machine_groups(self, machine_name: str) -> list[str]:
         """Get package groups for a specific machine."""
         groups = self.machines.get(machine_name, [])
 
@@ -170,11 +164,11 @@ class BrewfileConfig:
 
         return groups
 
-    def set_machine_groups(self, machine_name: str, groups: List[str]) -> None:
+    def set_machine_groups(self, machine_name: str, groups: list[str]) -> None:
         """Set package groups for a specific machine."""
         self.machines[machine_name] = groups
 
-    def get_available_groups(self) -> List[str]:
+    def get_available_groups(self) -> list[str]:
         """Get all available package groups."""
         return list(self.packages.keys())
 
@@ -183,7 +177,7 @@ class BrewfileConfig:
         if group_name not in self.packages:
             self.packages[group_name] = PackageGroup()
 
-    def collect_packages_for_groups(self, groups: List[str]) -> List[PackageStatus]:
+    def collect_packages_for_groups(self, groups: list[str]) -> list[PackageStatus]:
         """Collect all packages for given groups with status information."""
         packages = []
         seen_packages = set()  # Track (package_type, package_name) to avoid duplicates
@@ -195,19 +189,21 @@ class BrewfileConfig:
             group_data = self.packages[group]
 
             # Process each package type
-            for package_type in ['taps', 'brews', 'casks', 'mas']:
+            for package_type in ["taps", "brews", "casks", "mas"]:
                 package_list = getattr(group_data, package_type)
                 for package in package_list:
                     package_key = (package_type, package)
                     if package_key not in seen_packages:
                         # Handle package type naming (remove 's' for most, keep 'mas' as 'mas')
-                        display_type = package_type[:-1] if package_type != 'mas' else 'mas'
-                        packages.append(PackageStatus(
-                            name=package,
-                            group=group,
-                            package_type=display_type,
-                            installed=False  # Will be updated by caller
-                        ))
+                        display_type = package_type[:-1] if package_type != "mas" else "mas"
+                        packages.append(
+                            PackageStatus(
+                                name=package,
+                                group=group,
+                                package_type=display_type,
+                                installed=False,  # Will be updated by caller
+                            )
+                        )
                         seen_packages.add(package_key)
 
         return packages
@@ -220,7 +216,7 @@ class BrewfileManager:
         self.config_dir = Path.home() / ".config" / "brewfile"
         self.config_file = self.config_dir / "config.json"
         self.brewfile_path = Path.home() / "Brewfile"
-        self.machine_name = socket.gethostname().split('.')[0]  # Short hostname
+        self.machine_name = socket.gethostname().split(".")[0]  # Short hostname
         self.config = self._load_config()
 
     def _load_config(self) -> BrewfileConfig:
@@ -229,11 +225,11 @@ class BrewfileManager:
             return self._create_default_config()
 
         try:
-            with open(self.config_file, 'r') as f:
+            with open(self.config_file, "r") as f:
                 data = json.load(f)
 
             # Validate basic structure
-            required_keys = ['version', 'packages', 'machines']
+            required_keys = ["version", "packages", "machines"]
             for key in required_keys:
                 if key not in data:
                     warn(f"Config missing required key: {key}")
@@ -253,37 +249,37 @@ class BrewfileManager:
         self.config_dir.mkdir(parents=True, exist_ok=True)
 
         try:
-            with open(self.config_file, 'w') as f:
+            with open(self.config_file, "w") as f:
                 json.dump(self.config.to_dict(), f, indent=2)
         except OSError as e:
             die(f"Could not save config: {e}")
 
-    def _get_machine_groups(self) -> List[str]:
+    def _get_machine_groups(self) -> list[str]:
         """Get package groups for current machine."""
         return self.config.get_machine_groups(self.machine_name)
 
-    def _set_machine_groups(self, groups: List[str]) -> None:
+    def _set_machine_groups(self, groups: list[str]) -> None:
         """Set package groups for current machine."""
         self.config.set_machine_groups(self.machine_name, groups)
         self._save_config()
 
-    def _get_available_groups(self) -> List[str]:
+    def _get_available_groups(self) -> list[str]:
         """Get all available package groups."""
         return self.config.get_available_groups()
 
-    def _collect_packages_for_groups(self, groups: List[str]) -> List[PackageStatus]:
+    def _collect_packages_for_groups(self, groups: list[str]) -> list[PackageStatus]:
         """Collect all packages for given groups with status information."""
         return self.config.collect_packages_for_groups(groups)
 
-    def _generate_brewfile_content(self, groups: List[str]) -> str:
+    def _generate_brewfile_content(self, groups: list[str]) -> str:
         """Generate Brewfile content for given groups."""
         packages = self._collect_packages_for_groups(groups)
 
         # Group packages by type
-        taps = [p.name for p in packages if p.package_type == 'tap']
-        brews = [p.name for p in packages if p.package_type == 'brew']
-        casks = [p.name for p in packages if p.package_type == 'cask']
-        mas_apps = [p.name for p in packages if p.package_type == 'mas']
+        taps = [p.name for p in packages if p.package_type == "tap"]
+        brews = [p.name for p in packages if p.package_type == "brew"]
+        casks = [p.name for p in packages if p.package_type == "cask"]
+        mas_apps = [p.name for p in packages if p.package_type == "mas"]
 
         lines = []
 
@@ -292,39 +288,39 @@ class BrewfileManager:
             lines.append(f'tap "{tap}"')
 
         if taps:
-            lines.append('')  # Empty line after taps
+            lines.append("")  # Empty line after taps
 
         # Add brews
         for brew in brews:
             lines.append(f'brew "{brew}"')
 
         if brews:
-            lines.append('')  # Empty line after brews
+            lines.append("")  # Empty line after brews
 
         # Add casks
         for cask in casks:
             lines.append(f'cask "{cask}"')
 
         if casks:
-            lines.append('')  # Empty line after casks
+            lines.append("")  # Empty line after casks
 
         # Add mas apps (note: we can't regenerate IDs, so this is basic)
         for mas_app in mas_apps:
             lines.append(f'# mas "{mas_app}" # ID needed - check with: mas list')
 
-        return '\n'.join(lines) + '\n'
+        return "\n".join(lines) + "\n"
 
     def _write_brewfile(self, content: str) -> None:
         """Write content to ~/Brewfile."""
         try:
-            with open(self.brewfile_path, 'w') as f:
+            with open(self.brewfile_path, "w") as f:
                 f.write(content)
         except OSError as e:
             die(f"Could not write Brewfile: {e}")
 
     def _run_brew_bundle(self, command: str, capture_output: bool = True) -> subprocess.CompletedProcess:
         """Run brew bundle command."""
-        cmd = ['brew', 'bundle'] + command.split()
+        cmd = ["brew", "bundle"] + command.split()
 
         try:
             if capture_output:
@@ -335,53 +331,56 @@ class BrewfileManager:
             if capture_output:
                 error(f"brew bundle failed: {e.stderr}")
             die(f"Command failed: {' '.join(cmd)}")
+            return subprocess.CompletedProcess(cmd, e.returncode)  # Unreachable
 
     def _clean_brew_system(self) -> None:
         """Clean brew system before package discovery."""
         try:
             say("Cleaning brew packages...")
             # Remove orphaned dependencies
-            subprocess.run(['brew', 'autoremove'], check=False, capture_output=True)
+            subprocess.run(["brew", "autoremove"], check=False, capture_output=True)
             # Clear caches
-            subprocess.run(['brew', 'cleanup'], check=False, capture_output=True)
+            subprocess.run(["brew", "cleanup"], check=False, capture_output=True)
         except subprocess.CalledProcessError:
             # Don't fail if cleanup fails
             pass
 
-    def _get_system_packages(self, clean_first: bool = True) -> Dict[str, List[str]]:
+    def _get_system_packages(self, clean_first: bool = True) -> dict[str, list[str]]:
         """Get currently installed packages using brew bundle dump."""
         if clean_first:
             self._clean_brew_system()
 
-        with tempfile.NamedTemporaryFile(mode='w+', suffix='.brewfile', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w+", suffix=".brewfile", delete=False) as f:
             temp_brewfile = f.name
 
         try:
             # Use brew bundle dump to get current state (excluding VS Code extensions)
-            result = subprocess.run(
-                ['brew', 'bundle', 'dump', '--file', temp_brewfile, '--force', '--no-vscode'],
-                capture_output=True, text=True, check=True
+            _ = subprocess.run(
+                ["brew", "bundle", "dump", "--file", temp_brewfile, "--force", "--no-vscode"],
+                capture_output=True,
+                text=True,
+                check=True,
             )
 
             # Parse the generated Brewfile
-            packages = {'taps': [], 'brews': [], 'casks': [], 'mas': []}
+            packages = {"taps": [], "brews": [], "casks": [], "mas": []}
 
-            with open(temp_brewfile, 'r') as f:
+            with open(temp_brewfile, "r") as f:
                 for line in f:
                     line = line.strip()
-                    if line.startswith('tap '):
+                    if line.startswith("tap "):
                         tap = line.split('"')[1]
-                        packages['taps'].append(tap)
-                    elif line.startswith('brew '):
+                        packages["taps"].append(tap)
+                    elif line.startswith("brew "):
                         brew = line.split('"')[1]
-                        packages['brews'].append(brew)
-                    elif line.startswith('cask '):
+                        packages["brews"].append(brew)
+                    elif line.startswith("cask "):
                         cask = line.split('"')[1]
-                        packages['casks'].append(cask)
-                    elif line.startswith('mas '):
+                        packages["casks"].append(cask)
+                    elif line.startswith("mas "):
                         # Parse mas entry like: mas "App Name", id: 123456
                         mas_name = line.split('"')[1]
-                        packages['mas'].append(mas_name)
+                        packages["mas"].append(mas_name)
 
             # Fallback: Check for packages missing from brew bundle dump but actually installed
             # This can happen if packages were installed as dependencies
@@ -391,30 +390,31 @@ class BrewfileManager:
 
         except subprocess.CalledProcessError as e:
             die(f"Could not get system packages: {e}")
+            return {"taps": [], "brews": [], "casks": [], "mas": []}  # Unreachable
         finally:
             Path(temp_brewfile).unlink(missing_ok=True)
 
-    def _add_missing_installed_packages(self, packages: Dict[str, List[str]]) -> None:
+    def _add_missing_installed_packages(self, packages: dict[str, list[str]]) -> None:
         """Add packages that are installed but missing from brew bundle dump."""
         try:
             # Get all installed formulae
-            result = subprocess.run(['brew', 'list', '--formula'], capture_output=True, text=True, check=True)
+            result = subprocess.run(["brew", "list", "--formula"], capture_output=True, text=True, check=True)
             installed_brews = set(result.stdout.strip().split())
-            
-            # Get all installed casks  
-            result = subprocess.run(['brew', 'list', '--cask'], capture_output=True, text=True, check=True)
+
+            # Get all installed casks
+            result = subprocess.run(["brew", "list", "--cask"], capture_output=True, text=True, check=True)
             installed_casks = set(result.stdout.strip().split())
-            
+
             # Add missing brews
-            current_brews = set(packages['brews'])
+            current_brews = set(packages["brews"])
             missing_brews = installed_brews - current_brews
-            packages['brews'].extend(list(missing_brews))
-            
+            packages["brews"].extend(list(missing_brews))
+
             # Add missing casks
-            current_casks = set(packages['casks'])
+            current_casks = set(packages["casks"])
             missing_casks = installed_casks - current_casks
-            packages['casks'].extend(list(missing_casks))
-            
+            packages["casks"].extend(list(missing_casks))
+
         except subprocess.CalledProcessError:
             # If fallback detection fails, continue with what we have
             pass
@@ -428,20 +428,20 @@ class BrewfileManager:
         self.config.ensure_group_exists(self.machine_name)
         self._save_config()
 
-    def _get_missing_packages(self) -> Dict[str, List[str]]:
+    def _get_missing_packages(self) -> dict[str, list[str]]:
         """Get packages that are configured but not installed."""
         system_packages = self._get_system_packages(clean_first=False)
         groups = self._get_machine_groups()
         configured_packages = self._collect_packages_for_groups(groups)
 
-        missing = {'taps': [], 'brews': [], 'casks': [], 'mas': []}
+        missing = {"taps": [], "brews": [], "casks": [], "mas": []}
 
         # Group configured packages by type
         packages_by_type = {
-            'taps': [p for p in configured_packages if p.package_type == 'tap'],
-            'brews': [p for p in configured_packages if p.package_type == 'brew'],
-            'casks': [p for p in configured_packages if p.package_type == 'cask'],
-            'mas': [p for p in configured_packages if p.package_type == 'mas']
+            "taps": [p for p in configured_packages if p.package_type == "tap"],
+            "brews": [p for p in configured_packages if p.package_type == "brew"],
+            "casks": [p for p in configured_packages if p.package_type == "cask"],
+            "mas": [p for p in configured_packages if p.package_type == "mas"],
         }
 
         # Find missing packages for each type
@@ -453,20 +453,20 @@ class BrewfileManager:
 
         return missing
 
-    def _get_extra_packages(self) -> Dict[str, List[str]]:
+    def _get_extra_packages(self) -> dict[str, list[str]]:
         """Get packages that are installed but not configured."""
         system_packages = self._get_system_packages(clean_first=False)
         groups = self._get_machine_groups()
         configured_packages = self._collect_packages_for_groups(groups)
 
-        extra = {'taps': [], 'brews': [], 'casks': [], 'mas': []}
+        extra = {"taps": [], "brews": [], "casks": [], "mas": []}
 
         # Group configured packages by type
         packages_by_type = {
-            'taps': [p for p in configured_packages if p.package_type == 'tap'],
-            'brews': [p for p in configured_packages if p.package_type == 'brew'],
-            'casks': [p for p in configured_packages if p.package_type == 'cask'],
-            'mas': [p for p in configured_packages if p.package_type == 'mas']
+            "taps": [p for p in configured_packages if p.package_type == "tap"],
+            "brews": [p for p in configured_packages if p.package_type == "brew"],
+            "casks": [p for p in configured_packages if p.package_type == "cask"],
+            "mas": [p for p in configured_packages if p.package_type == "mas"],
         }
 
         # Find extra packages for each type
@@ -554,8 +554,8 @@ class BrewfileManager:
         system_packages = self._get_system_packages(clean_first=True)
         for pkg in configured_packages:
             # Convert package type to plural form for system_packages lookup
-            if pkg.package_type == 'mas':
-                pkg_type_plural = 'mas'  # MAS is already plural form in system_packages
+            if pkg.package_type == "mas":
+                pkg_type_plural = "mas"  # MAS is already plural form in system_packages
             else:
                 pkg_type_plural = f"{pkg.package_type}s"
             pkg.installed = pkg.name in system_packages.get(pkg_type_plural, [])
@@ -565,10 +565,10 @@ class BrewfileManager:
 
         # Group packages by type for display
         packages_by_type = {
-            'taps': [p for p in configured_packages if p.package_type == 'tap'],
-            'brews': [p for p in configured_packages if p.package_type == 'brew'],
-            'casks': [p for p in configured_packages if p.package_type == 'cask'],
-            'mas': [p for p in configured_packages if p.package_type == 'mas']
+            "taps": [p for p in configured_packages if p.package_type == "tap"],
+            "brews": [p for p in configured_packages if p.package_type == "brew"],
+            "casks": [p for p in configured_packages if p.package_type == "cask"],
+            "mas": [p for p in configured_packages if p.package_type == "mas"],
         }
 
         # Show each package type
@@ -596,7 +596,7 @@ class BrewfileManager:
         total_missing = sum(len(pkgs) for pkgs in missing_packages.values())
         total_extra = sum(len(pkgs) for pkgs in extra_packages.values())
 
-        print(f"\nSummary:")
+        print("\nSummary:")
         if total_missing > 0:
             print(f"  ! {total_missing} package(s) need installation")
         if total_extra > 0:
@@ -638,7 +638,7 @@ class BrewfileManager:
             print()
             return
 
-        if not confirm.startswith('y'):
+        if not confirm.startswith("y"):
             print()
             say("Installation cancelled.")
             print()
@@ -682,7 +682,7 @@ class BrewfileManager:
             print()
             return
 
-        if not confirm.startswith('y'):
+        if not confirm.startswith("y"):
             print()
             say("Cleanup cancelled.")
             print()
@@ -743,7 +743,7 @@ class BrewfileManager:
             print()
             return
 
-        if not confirm.startswith('y'):
+        if not confirm.startswith("y"):
             print()
             say("Synchronization cancelled.")
             print()
@@ -778,9 +778,9 @@ class BrewfileManager:
 
         # Find extra packages
         extra_packages = []
-        for package_type in ['taps', 'brews', 'casks', 'mas']:
+        for package_type in ["taps", "brews", "casks", "mas"]:
             # Handle package type naming for comparison
-            compare_type = package_type[:-1] if package_type != 'mas' else 'mas'
+            compare_type = package_type[:-1] if package_type != "mas" else "mas"
             configured_names = {p.name for p in configured_packages if p.package_type == compare_type}
             installed = set(system_packages[package_type])
             extra = installed - configured_names
@@ -799,13 +799,13 @@ class BrewfileManager:
         if len(extra_packages) > 10:
             print(f"  ... and {len(extra_packages) - 10} more")
 
-        print(f"\nHow would you like to handle these packages?")
-        print(f"  (1) Add to existing group")
+        print("\nHow would you like to handle these packages?")
+        print("  (1) Add to existing group")
         print(f"  (2) Add to machine group ({self.machine_name})")
-        print(f"  (3) Create new group")
-        print(f"  (4) Edit config manually")
-        print(f"  (5) Remove from system")
-        print(f"  (q) Skip for now")
+        print("  (3) Create new group")
+        print("  (4) Edit config manually")
+        print("  (5) Remove from system")
+        print("  (q) Skip for now")
 
         try:
             choice = input("Enter your choice [q]: ").lower().strip()
@@ -828,7 +828,7 @@ class BrewfileManager:
         else:
             warn("Invalid choice.")
 
-    def _adopt_to_existing_group(self, packages: List[Tuple[str, str]]) -> None:
+    def _adopt_to_existing_group(self, packages: list[tuple[str, str]]) -> None:
         """Adopt packages to an existing group."""
         available_groups = self._get_available_groups()
         if not available_groups:
@@ -848,7 +848,7 @@ class BrewfileManager:
 
         self._add_packages_to_group(packages, group)
 
-    def _adopt_to_machine_group(self, packages: List[Tuple[str, str]]) -> None:
+    def _adopt_to_machine_group(self, packages: list[tuple[str, str]]) -> None:
         """Adopt packages to machine-specific group."""
         self._ensure_machine_group_exists()
         self._add_packages_to_group(packages, self.machine_name)
@@ -860,7 +860,7 @@ class BrewfileManager:
             self.config.machines[self.machine_name] = machine_groups
             self._save_config()
 
-    def _adopt_to_new_group(self, packages: List[Tuple[str, str]]) -> None:
+    def _adopt_to_new_group(self, packages: list[tuple[str, str]]) -> None:
         """Adopt packages to a new group."""
         try:
             group_name = input("Enter new group name: ").strip()
@@ -884,7 +884,7 @@ class BrewfileManager:
         # Ask if they want to add this group to current machine
         print(f"\nAdd '{group_name}' to this machine's groups? (y/N): ", end="")
         try:
-            if input().lower().startswith('y'):
+            if input().lower().startswith("y"):
                 machine_groups = self.config.machines.get(self.machine_name, [])
                 machine_groups.append(group_name)
                 self.config.machines[self.machine_name] = machine_groups
@@ -892,7 +892,7 @@ class BrewfileManager:
         except (EOFError, KeyboardInterrupt):
             print()
 
-    def _add_packages_to_group(self, packages: List[Tuple[str, str]], group_name: str) -> None:
+    def _add_packages_to_group(self, packages: list[tuple[str, str]], group_name: str) -> None:
         """Add packages to a specific group."""
         if group_name not in self.config.packages:
             self.config.ensure_group_exists(group_name)
@@ -907,7 +907,7 @@ class BrewfileManager:
 
     def _edit_config_manually(self) -> None:
         """Open config file in editor."""
-        editor = os.environ.get('EDITOR', 'nano')
+        editor = os.environ.get("EDITOR", "nano")
         try:
             subprocess.run([editor, str(self.config_file)], check=True)
             # Reload config after editing
@@ -916,12 +916,12 @@ class BrewfileManager:
         except subprocess.CalledProcessError:
             warn("Failed to open editor.")
 
-    def _remove_extra_packages(self, packages: List[Tuple[str, str]]) -> None:
+    def _remove_extra_packages(self, packages: list[tuple[str, str]]) -> None:
         """Remove extra packages from system."""
         print(f"\nThis will remove {len(packages)} package(s) from your system.")
         print("Are you sure? (y/N): ", end="")
         try:
-            if not input().lower().startswith('y'):
+            if not input().lower().startswith("y"):
                 return
         except (EOFError, KeyboardInterrupt):
             print()
@@ -929,10 +929,10 @@ class BrewfileManager:
 
         for package_type, package in packages:
             try:
-                if package_type == 'casks':
-                    subprocess.run(['brew', 'uninstall', '--cask', package], check=True)
+                if package_type == "casks":
+                    subprocess.run(["brew", "uninstall", "--cask", package], check=True)
                 else:
-                    subprocess.run(['brew', 'uninstall', package], check=True)
+                    subprocess.run(["brew", "uninstall", package], check=True)
             except subprocess.CalledProcessError:
                 warn(f"Failed to remove {package}")
 
@@ -944,7 +944,7 @@ class BrewfileManager:
             say(f"Machine {self.machine_name} is not configured.")
             print("Would you like to configure it now? (y/N): ", end="")
             try:
-                if input().lower().startswith('y'):
+                if input().lower().startswith("y"):
                     self.cmd_init()
                 else:
                     return
@@ -955,15 +955,15 @@ class BrewfileManager:
         while True:
             self.cmd_status()
 
-            print(f"\nWhat would you like to do?")
-            print(f"  (1) Install missing packages")
-            print(f"  (2) Remove extra packages")
-            print(f"  (3) Adopt extra packages to config")
-            print(f"  (4) Sync both (install + remove)")
-            print(f"  (5) Reconfigure machine groups")
-            print(f"  (6) Regenerate Brewfile")
-            print(f"  (7) Edit config manually")
-            print(f"  (q) Quit")
+            print("\nWhat would you like to do?")
+            print("  (1) Install missing packages")
+            print("  (2) Remove extra packages")
+            print("  (3) Adopt extra packages to config")
+            print("  (4) Sync both (install + remove)")
+            print("  (5) Reconfigure machine groups")
+            print("  (6) Regenerate Brewfile")
+            print("  (7) Edit config manually")
+            print("  (q) Quit")
 
             try:
                 choice = input("Enter your choice [q]: ").lower().strip()
