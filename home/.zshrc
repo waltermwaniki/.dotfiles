@@ -1,52 +1,30 @@
 # usr/bin/env zsh
 alias src~='source ~/.zshrc'
 
+# Source common shell configuration (exports, aliases, functions)
+if [ -f ~/.commonshrc ]; then
+  source ~/.commonshrc
+fi
 
+# Source prompt configuration if exists
 if [ -f ~/.prompt ]; then
   source ~/.prompt
 fi
 
-if [ -f ~/.aliases ]; then
-  source ~/.aliases
-fi
-
-if [ -f ~/.exports ]; then
-  source ~/.exports
-fi
-
-
-pyactivate() {
-	# Activates a Python virtual environment.
-	# Defaults to ./.venv if no path is provided.
-	# Usage: venv [path_to_venv_dir]
-	local venv_path="${1:-.venv}"
-	local activate_script
-
-	# Check for Windows-like environments (Git Bash, MSYS, Cygwin)
-	if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
-		activate_script="${venv_path}/Scripts/activate"
-	else
-		activate_script="${venv_path}/bin/activate"
-	fi
-
-	if [ -f "${activate_script}" ]; then
-		source "${activate_script}"
-	else
-		# Use a shell-agnostic way to print the shell name
-		echo "${0##*/}: activate script not found: ${activate_script}" >&2
-		return 1
-	fi
-}
-alias venv=pyactivate
 
 # Set up completions
 autoload -Uz compinit
 compinit
-source $(brew --prefix)/share/zsh-autosuggestions/zsh-autosuggestions.zsh
-source $(brew --prefix)/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
-eval "$(uv generate-shell-completion zsh)"
+# Load zsh plugins if available
+if command -v brew &>/dev/null; then
+  local brew_prefix="$(brew --prefix)"
+  [[ -f "$brew_prefix/share/zsh-autosuggestions/zsh-autosuggestions.zsh" ]] && source "$brew_prefix/share/zsh-autosuggestions/zsh-autosuggestions.zsh"
+  [[ -f "$brew_prefix/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" ]] && source "$brew_prefix/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
+fi
 
-# [ -f ~/.fzf.zsh ] && source ~/.fzf.zsh
+
+# -------- Initialize utility tools -------
+
 if [ -f ~/.fzf.zsh ]; then
   source ~/.fzf.zsh
 
@@ -68,5 +46,11 @@ if [ -f ~/.fzf.zsh ]; then
   }
 fi
 
+# Load uv completion if available
+command -v uv &>/dev/null && eval "$(uv generate-shell-completion zsh)"
 
-eval "$(zoxide init --cmd cd zsh)"
+# Load zoxide if available
+command -v zoxide >/dev/null 2>&1 && eval "$(zoxide init --cmd cd zsh)"
+
+# Initialize Starship prompt
+command -v starship >/dev/null 2>&1 && eval "$(starship init zsh)"

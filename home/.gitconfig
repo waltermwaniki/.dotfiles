@@ -6,7 +6,7 @@
 #	name = Walter Mwaniki
 #	email = walter.g.mwaniki@gmail.com
 [core]
-	excludesfile = /Users/mwaniki/.gitignore_global
+	excludesfile = ~/.gitignore_global
 	autocrlf = input
 [filter "lfs"]
 	clean = git-lfs clean -- %f

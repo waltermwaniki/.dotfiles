@@ -1,0 +1,110 @@
+#!/usr/bin/env sh
+# Common shell configuration for bash, zsh, and other shells
+# This file contains exports, aliases, and functions that work across all shells
+
+# =============================================================================
+# ENVIRONMENT VARIABLES & EXPORTS
+# =============================================================================
+
+# Homebrew - use dynamic path detection
+if [ -x "/opt/homebrew/bin/brew" ]; then
+  # Apple Silicon Mac
+  eval "$(/opt/homebrew/bin/brew shellenv)"
+  export PATH="/opt/homebrew/opt/python/libexec/bin:$PATH"
+elif [ -x "/usr/local/bin/brew" ]; then
+  # Intel Mac or Linux
+  eval "$(/usr/local/bin/brew shellenv)"
+  export PATH="/usr/local/opt/python/libexec/bin:$PATH"
+elif command -v brew >/dev/null 2>&1; then
+  # Homebrew in PATH somewhere else
+  eval "$(brew shellenv)"
+fi
+
+# uv (Python package manager)
+export PATH="$HOME/.local/bin:$PATH"
+
+# pnpm (Node.js package manager)
+export PNPM_HOME="$HOME/Library/pnpm"
+case ":$PATH:" in
+  *":$PNPM_HOME:"*) ;;
+  *) export PATH="$PNPM_HOME:$PATH" ;;
+esac
+
+# Rust/Cargo environment
+if [ -f "$HOME/.cargo/env" ]; then
+  . "$HOME/.cargo/env"
+fi
+
+# =============================================================================
+# ALIASES
+# =============================================================================
+
+# Navigation shortcuts
+alias ..="cd .."
+alias ...="cd ../.."
+alias ....="cd ../../.."
+alias .....="cd ../../../.."
+
+# Common directories
+alias dl="cd ~/Downloads"
+alias dt="cd ~/Desktop"
+alias dc="cd ~/Documents"
+alias p="cd ~/Documents/projects"
+alias home="cd ~"
+
+# ls with colors and formatting
+alias ls='ls -G' # colored output
+alias ll='ls -l' # long listing
+alias la='ls -la' # all files
+
+# Python
+alias py=python3
+alias python=python3
+alias pip='noglob pip'
+
+# Git shortcuts
+alias g="git"
+alias gs="git status"
+alias gd="git diff"
+alias gb="git branch"
+alias gm="git checkout master"
+
+# Editor
+alias vim="nvim"
+
+# Better cat with syntax highlighting (if bat is available)
+if command -v bat >/dev/null 2>&1; then
+  alias cat="bat"
+fi
+
+# =============================================================================
+# FUNCTIONS
+# =============================================================================
+
+# Python virtual environment activation
+pyactivate() {
+	# Activates a Python virtual environment.
+	# Defaults to ./.venv if no path is provided.
+	# Usage: venv [path_to_venv_dir]
+	local venv_path="${1:-.venv}"
+	local activate_script
+
+	# Check for Windows-like environments (Git Bash, MSYS, Cygwin)
+	if [ "$OSTYPE" = "msys" ] || [ "$OSTYPE" = "cygwin" ]; then
+		activate_script="${venv_path}/Scripts/activate"
+	else
+		activate_script="${venv_path}/bin/activate"
+	fi
+
+	if [ -f "${activate_script}" ]; then
+		. "${activate_script}"
+	else
+		# Use a shell-agnostic way to print the shell name
+		echo "${0##*/}: activate script not found: ${activate_script}" >&2
+		return 1
+	fi
+}
+alias venv=pyactivate
+
+# Shell configuration reload shortcut
+alias src~='source ~/.zshrc'
