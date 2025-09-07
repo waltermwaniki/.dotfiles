@@ -51,7 +51,6 @@ class BrewfileManager:
     def __init__(self):
         self.repo_dir = self._resolve_repo_dir()
         self.brewfile = self.repo_dir / "Brewfile"
-        self.extra_brewfile = self.repo_dir / "Brewfile.extra"
 
     # --- Helper Methods ---
 
@@ -112,27 +111,6 @@ class BrewfileManager:
             if temp_file_path and temp_file_path.exists():
                 temp_file_path.unlink()
 
-    def _group_print(self, lines, package_origins=None):
-        """Parses and prints a grouped summary of package lines."""
-        if not lines:
-            print("      (none)")
-            return
-        grouped = defaultdict(list)
-        for line in lines:
-            match = PACKAGE_LINE_RE.match(line)
-            if match:
-                kind, name = match.groups()
-                origin_info = ""
-                if package_origins and line in package_origins:
-                    origin_info = f" (from {package_origins[line]})"
-                grouped[kind].append(f"{name}{origin_info}")
-            else:
-                grouped["unknown"].append(line)
-        for kind in ["tap", "brew", "cask", "mas", "whalebrew", "vscode", "unknown"]:
-            if kind in grouped:
-                names = ", ".join(sorted(grouped[kind]))
-                count = len(grouped[kind])
-                print(f"      {kind} ({count}): {names}")
 
     def _remove_line_from_file(self, file_path, line_to_remove):
         """Reads a file, removes a specific line, and writes the file back."""
@@ -143,12 +121,9 @@ class BrewfileManager:
                 if line.strip() != line_to_remove:
                     f.write(line)
 
-    # --- Main Commands ---
-
-
     def _analyze_package_status(self, args):
         """Analyzes package status across all Brewfiles and returns structured data.
-        
+
         Returns:
             dict with keys:
             - 'files_considered': List of Brewfile paths being considered
@@ -162,7 +137,7 @@ class BrewfileManager:
         # Collect files to consider based on args
         files_to_consider_set = set()
         files_to_consider_set.add(self.brewfile)  # Always include main
-        
+
         if args.all:
             for path in sorted(self.repo_dir.glob("Brewfile.*")):
                 if path.is_file():
@@ -174,9 +149,9 @@ class BrewfileManager:
                     f = self.repo_dir / f"Brewfile.{name}"
                     if f.is_file():
                         files_to_consider_set.add(f)
-        
+
         files_to_consider = sorted(list(files_to_consider_set))
-        
+
         # Collect ALL Brewfiles (for cross-reference in cleanup)
         all_brewfiles = {}
         for brewfile_path in sorted(self.repo_dir.glob("Brewfile*")):
@@ -191,11 +166,11 @@ class BrewfileManager:
                                 if match:
                                     kind, name = match.groups()
                                     all_brewfiles[brewfile_path].append((kind, name, cleaned_line))
-        
+
         # Collect declared packages from files being considered
         declared_packages_by_file = defaultdict(list)
         all_declared_lines = set()
-        
+
         for file_path in files_to_consider:
             if file_path.exists():
                 with open(file_path, "r") as f:
@@ -207,7 +182,7 @@ class BrewfileManager:
                                 kind, name = match.groups()
                                 declared_packages_by_file[file_path].append((kind, name, cleaned_line))
                                 all_declared_lines.add(cleaned_line)
-        
+
         # Collect installed packages
         installed_lines = set()
         with tempfile.NamedTemporaryFile(
@@ -222,7 +197,7 @@ class BrewfileManager:
                 cleaned_line = line.strip()
                 if cleaned_line:
                     installed_lines.add(cleaned_line)
-        
+
         return {
             'files_considered': files_to_consider,
             'declared_packages_by_file': declared_packages_by_file,
@@ -232,52 +207,12 @@ class BrewfileManager:
             'missing_from_system': all_declared_lines - installed_lines,
             'all_brewfiles': all_brewfiles,
         }
-    
-    def _print_packages_grouped(self, grouped_packages, title=None, show_cross_references=False, status_data=None):
-        """Prints grouped packages in a consistent vertical format.
-        
-        Args:
-            grouped_packages: Dict mapping kind -> list of (name, extra_info_dict)
-            title: Optional title to print before the packages
-            show_cross_references: Whether to show asterisks for packages in other Brewfiles
-            status_data: Status data for cross-reference checking (required if show_cross_references=True)
-        """
-        if title:
-            print(f"{YELLOW}{title}:{RESET}")
-        
-        has_cross_references = False
-        
-        for kind in ["tap", "brew", "cask", "mas", "whalebrew", "vscode"]:
-            if kind in grouped_packages:
-                count = len(grouped_packages[kind])
-                print(f"  {kind} ({count}):")
-                
-                for name, extra_info in sorted(grouped_packages[kind]):
-                    prefix = "    "
-                    display_name = name
-                    
-                    # Handle cross-references (show which Brewfile declares it)
-                    if show_cross_references and extra_info.get('brewfile_sources'):
-                        prefix = f"    {RED}*{RESET} "
-                        brewfile_names = ", ".join(sorted([f.name for f in extra_info['brewfile_sources']]))
-                        display_name = f"{name} [{brewfile_names}]"
-                        has_cross_references = True
-                    
-                    # Apply other styling
-                    if extra_info.get('not_installed'):
-                        display_name = f"{display_name} {YELLOW}(not on system){RESET}"
-                    
-                    print(f"{prefix}{display_name}")
-                print()  # Blank line after each kind
-        
-        if show_cross_references and has_cross_references:
-            print(f"{RED}* Items marked with asterisk would be removed but are declared in other Brewfiles{RESET}")
-            print()
-    
+
+
     def _get_brewfile_sources_for_packages(self, package_lines, status_data):
         """Returns a dict mapping package lines to the Brewfiles that declare them."""
         package_to_sources = {}
-        
+
         for brewfile_path, packages in status_data['all_brewfiles'].items():
             if brewfile_path not in status_data['files_considered']:
                 for kind, name, line in packages:
@@ -285,155 +220,14 @@ class BrewfileManager:
                         if line not in package_to_sources:
                             package_to_sources[line] = set()
                         package_to_sources[line].add(brewfile_path)
-        
+
         return package_to_sources
-    
-    def _print_cleanup_preview(self, status_data, cleanup_packages):
-        """Prints a cleanup preview using the same unified format as status."""
-        if not cleanup_packages:
-            return
-        
-        # Get Brewfile sources for cross-reference
-        package_sources = self._get_brewfile_sources_for_packages(cleanup_packages, status_data)
-        
-        # Group packages for display (identical to unified view)
-        unified_cleanup = defaultdict(list)  # kind -> list of (name, extra_info_dict)
-        
-        for line in cleanup_packages:
-            match = PACKAGE_LINE_RE.match(line)
-            if match:
-                kind, name = match.groups()
-                sources = package_sources.get(line, set())
-                
-                if sources:
-                    # Package is declared in other Brewfiles
-                    extra_info = {
-                        'brewfile_sources': sources,
-                        'would_be_removed': True
-                    }
-                else:
-                    # Package is truly only on system
-                    extra_info = {
-                        'brewfile_sources': set(),
-                        'would_be_removed': True,
-                        'system_only': True
-                    }
-                unified_cleanup[kind].append((name, extra_info))
-        
-        # Print using the same format as status
-        print(f"{YELLOW}Packages that would be removed:{RESET}")
-        
-        for kind in ["tap", "brew", "cask", "mas", "whalebrew", "vscode"]:
-            if kind in unified_cleanup:
-                count = len(unified_cleanup[kind])
-                print(f"  {kind} ({count}):")
-                
-                for name, extra_info in sorted(unified_cleanup[kind]):
-                    prefix = f"    {RED}*{RESET} "  # All cleanup items get asterisks
-                    
-                    # Determine source label
-                    if extra_info.get('system_only'):
-                        source_label = "On system only"
-                    elif extra_info.get('brewfile_sources'):
-                        brewfile_names = ", ".join(sorted([f.name for f in extra_info['brewfile_sources']]))
-                        source_label = brewfile_names
-                    else:
-                        source_label = "Unknown"
-                    
-                    display_name = f"{name} [{source_label}]"
-                    print(f"{prefix}{display_name}")
-                print()  # Blank line after each kind
-        
-        # Note: In cleanup, all items shown would be removed, so no need for redundant legend
-        # The legend is already clear from the "Packages that would be removed" title
-    
 
-
-    def cmd_dump(self, args):
-        """Dumps installed packages to the Brewfile(s)."""
-        self._ensure_brew()
-        installed_set = set()
-        with tempfile.NamedTemporaryFile(
-            mode="w+", suffix=".Brewfile-dump", encoding="utf-8"
-        ) as temp_dump:
-            say("Dumping currently installed packages from Homebrew...")
-            subprocess.run(
-                [
-                    "brew",
-                    "bundle",
-                    "dump",
-                    "--force",
-                    "--no-vscode",
-                    "--file",
-                    temp_dump.name,
-                ],
-                capture_output=True,
-                text=True,
-            )
-            temp_dump.seek(0)
-            for line in temp_dump:
-                cleaned_line = line.strip()
-                if cleaned_line:
-                    installed_set.add(cleaned_line)
-        include_files = self._resolve_include_files(args)
-        if not args.force:
-            declared_set = set()
-            with self._get_merged_brewfile_path(args) as merged_file:
-                with open(merged_file, "r") as f:
-                    for line in f:
-                        cleaned_line = line.strip()
-                        if cleaned_line:
-                            declared_set.add(cleaned_line)
-            new_packages = sorted(list(installed_set - declared_set))
-            if not new_packages:
-                say("No new packages to add. Brewfile(s) are up to date.")
-                return
-            primary_target = include_files[0] if include_files else self.brewfile
-            say(
-                f"Appending {len(new_packages)} new package(s) to {primary_target.name}..."
-            )
-            with open(primary_target, "a+") as f:
-                if f.tell() > 0:
-                    f.seek(f.tell() - 1)
-                    if f.read(1) != "\n":
-                        f.write("\n")
-                for package in new_packages:
-                    f.write(f"{package}\n")
-        else:
-            say("Performing force-overwrite dump...")
-            package_membership = {}
-            all_managed_files = [self.brewfile] + include_files
-            for file_path in all_managed_files:
-                if file_path.exists():
-                    with open(file_path, "r") as f:
-                        for line in f:
-                            cleaned_line = line.strip()
-                            if cleaned_line:
-                                package_membership[cleaned_line] = file_path
-            new_item_target = self.brewfile
-            if self.extra_brewfile in all_managed_files:
-                new_item_target = self.extra_brewfile
-            elif include_files:
-                new_item_target = include_files[0]
-            new_contents = defaultdict(list)
-            for package in sorted(list(installed_set)):
-                target_file = package_membership.get(package, new_item_target)
-                new_contents[target_file].append(package)
-            for file_path in all_managed_files:
-                say(
-                    f"Writing {len(new_contents[file_path])} items to {file_path.name}..."
-                )
-                with open(file_path, "w") as f:
-                    if new_contents[file_path]:
-                        f.write("\n".join(new_contents[file_path]) + "\n")
-                    else:
-                        f.write("")
-        say("Dump complete.")
 
     def _create_unified_package_view(self, status_data):
         """Creates a unified view of all packages organized by type, showing their sources."""
         unified_packages = defaultdict(list)  # kind -> list of (name, extra_info_dict)
-        
+
         # Add declared packages from each Brewfile
         for file_path in status_data['files_considered']:
             for kind, name, original_line in status_data['declared_packages_by_file'][file_path]:
@@ -444,16 +238,16 @@ class BrewfileManager:
                     'is_declared': True
                 }
                 unified_packages[kind].append((name, extra_info))
-        
+
         # Add "on system only" packages
         package_sources = self._get_brewfile_sources_for_packages(status_data['on_system_only'], status_data)
-        
+
         for line in status_data['on_system_only']:
             match = PACKAGE_LINE_RE.match(line)
             if match:
                 kind, name = match.groups()
                 sources = package_sources.get(line, set())
-                
+
                 if sources:
                     # Package is declared in other Brewfiles
                     extra_info = {
@@ -472,22 +266,22 @@ class BrewfileManager:
                         'system_only': True
                     }
                 unified_packages[kind].append((name, extra_info))
-        
+
         return unified_packages
-    
+
     def _print_status_view(self, status_data, unified_packages):
         """Prints the unified status view (shared between status and interactive commands)."""
         print()  # Add a blank line for better separation
-        
+
         for kind in ["tap", "brew", "cask", "mas", "whalebrew", "vscode"]:
             if kind in unified_packages:
                 count = len(unified_packages[kind])
                 print(f"{BLUE}{kind} ({count}):{RESET}")
-                
+
                 for name, extra_info in sorted(unified_packages[kind]):
                     prefix = "  "
                     display_name = name
-                    
+
                     # Determine source label and prefix (only color the indicators)
                     if extra_info.get('system_only'):
                         source_label = "On system only"
@@ -501,7 +295,7 @@ class BrewfileManager:
                             else:
                                 short_names.append(f.name.replace("Brewfile.", ""))
                         source_label = ", ".join(short_names)
-                        
+
                         if extra_info.get('would_be_removed'):
                             prefix = f"  {RED}*{RESET} "
                         elif extra_info.get('not_installed'):
@@ -511,16 +305,16 @@ class BrewfileManager:
                     else:
                         source_label = "Unknown"
                         prefix = "  "
-                    
+
                     # Package name and source are always normal color
                     display_name = f"{name} [{source_label}]"
-                    
+
                     print(f"{prefix}{display_name}")
                 print()  # Blank line after each kind
-        
+
         # Print legend for visual indicators
         has_asterisks = any(
-            any(extra_info.get('would_be_removed') or extra_info.get('system_only') 
+            any(extra_info.get('would_be_removed') or extra_info.get('system_only')
                 for name, extra_info in packages)
             for packages in unified_packages.values()
         )
@@ -529,14 +323,14 @@ class BrewfileManager:
                 for name, extra_info in packages)
             for packages in unified_packages.values()
         )
-        
+
         # Legend is now integrated with the issue summary in interactive mode
         # Only show legend in non-interactive contexts (none currently)
         if False:  # Placeholder for future non-interactive status commands
             pass
-        
+
         return has_asterisks, has_missing
-    
+
     def _run_install(self, args):
         """Runs install operation for interactive mode."""
         files_to_apply = [self.brewfile] + self._resolve_include_files(args)
@@ -555,18 +349,18 @@ class BrewfileManager:
                 warn(f"Failed to apply {brewfile_path}")
             else:
                 say(f"Successfully applied {brewfile_path}")
-    
+
     def _run_cleanup(self, args, status_data):
         """Runs cleanup operation for interactive mode."""
         cleanup_packages = status_data['on_system_only']
-        
+
         if not cleanup_packages:
             say("Nothing to clean up.")
             return
-        
+
         file_basenames = [p.name for p in status_data['files_considered']]
         say(f"Removing packages not declared in: {', '.join(file_basenames)}")
-        
+
         with self._get_merged_brewfile_path(args) as merged_file_path:
             result = subprocess.run(
                 ["brew", "bundle", "cleanup", "--file", str(merged_file_path), "--force"],
@@ -576,87 +370,185 @@ class BrewfileManager:
                 say("Cleanup complete.")
             else:
                 warn("Cleanup finished with errors.")
-    
+
+    def _run_adopt_packages(self, args, status_data):
+        """Interactively adopt extra packages into Brewfiles."""
+        extra_packages = status_data['on_system_only']
+
+        if not extra_packages:
+            say("No extra packages to adopt.")
+            return
+
+        # Show packages to be adopted
+        print(f"\n{YELLOW}Extra packages found:{RESET}")
+
+        # Group by package type for display
+        grouped = defaultdict(list)
+        for line in extra_packages:
+            match = PACKAGE_LINE_RE.match(line)
+            if match:
+                kind, name = match.groups()
+                grouped[kind].append(name)
+
+        for kind in ["tap", "brew", "cask", "mas", "whalebrew", "vscode"]:
+            if kind in grouped:
+                print(f"  {kind}: {', '.join(sorted(grouped[kind]))}")
+
+        # Let user choose target Brewfile
+        print(f"\nChoose target Brewfile:")
+        available_brewfiles = []
+
+        # Always offer main Brewfile
+        available_brewfiles.append(("1", "main", self.brewfile))
+        print("  (1) main (Brewfile)")
+
+        # Find existing Brewfile.* files
+        counter = 2
+        for brewfile_path in sorted(self.repo_dir.glob("Brewfile.*")):
+            if brewfile_path.is_file():
+                short_name = brewfile_path.name.replace("Brewfile.", "")
+                available_brewfiles.append((str(counter), short_name, brewfile_path))
+                print(f"  ({counter}) {short_name} ({brewfile_path.name})")
+                counter += 1
+
+        # Option to create new Brewfile
+        print(f"  (n) Create new Brewfile")
+        print(f"  (q) Cancel")
+
+        try:
+            choice = input("Enter your choice [q]: ").lower().strip()
+        except (EOFError, KeyboardInterrupt):
+            choice = "q"
+            print()
+
+        if choice == "q" or choice == "":
+            say("Adoption cancelled.")
+            return
+        elif choice == "n":
+            try:
+                new_name = input("Enter name for new Brewfile (e.g., 'work'): ").strip()
+            except (EOFError, KeyboardInterrupt):
+                say("Adoption cancelled.")
+                return
+
+            if not new_name or not new_name.replace("-", "").replace("_", "").isalnum():
+                warn("Invalid Brewfile name.")
+                return
+
+            target_file = self.repo_dir / f"Brewfile.{new_name}"
+            target_name = new_name
+        else:
+            # Find selected Brewfile
+            target_file = None
+            target_name = None
+            for num, name, path in available_brewfiles:
+                if choice == num:
+                    target_file = path
+                    target_name = name
+                    break
+
+            if not target_file:
+                warn("Invalid choice.")
+                return
+
+        # Add packages to target file
+        say(f"Adding {len(extra_packages)} package(s) to {target_name}...")
+
+        with open(target_file, "a+") as f:
+            # Add newline if file is not empty and doesn't end with newline
+            if f.tell() > 0:
+                f.seek(f.tell() - 1)
+                if f.read(1) != "\n":
+                    f.write("\n")
+
+            # Add packages sorted by type then name
+            for kind in ["tap", "brew", "cask", "mas", "whalebrew", "vscode"]:
+                if kind in grouped:
+                    for package_name in sorted(grouped[kind]):
+                        f.write(f'{kind} "{package_name}"\n')
+
+        say(f"Successfully added packages to {target_name}. Run the command again to see updated status.")
+
+    # --- Main Commands ---
+
     def cmd_interactive(self, args):
         """Interactive brewfile management - primary user interface."""
         self._ensure_brew()
-        
+
         # Use shared analysis method
         status_data = self._analyze_package_status(args)
-        
+
         # Create unified view
         unified_packages = self._create_unified_package_view(status_data)
-        
+
         # Print status view and get issue counts
         has_asterisks, has_missing = self._print_status_view(status_data, unified_packages)
-        
+
         # If no issues, just show status and exit
         if not has_asterisks and not has_missing:
             say("✓ System is fully synchronized with your Brewfile(s).")
             return
-        
+
         # Count issues for summary
         asterisk_count = sum(
-            sum(1 for name, extra_info in packages 
+            sum(1 for name, extra_info in packages
                 if extra_info.get('would_be_removed') or extra_info.get('system_only'))
             for packages in unified_packages.values()
         )
         missing_count = sum(
-            sum(1 for name, extra_info in packages 
+            sum(1 for name, extra_info in packages
                 if extra_info.get('not_installed') and not extra_info.get('would_be_removed'))
             for packages in unified_packages.values()
         )
-        
+
         print(f"{YELLOW}Issues found:{RESET}")
         if missing_count > 0:
             print(f"  {YELLOW}!{RESET} {missing_count} package(s) need installation (declared but not installed)")
         if asterisk_count > 0:
             print(f"  {RED}*{RESET} {asterisk_count} package(s) would be removed (not in current scope)")
         print()
-        
+
         # Interactive menu
         print("What would you like to do?")
         print("  (1) Remove extra packages")
-        print("  (2) Install missing packages")
-        print("  (3) Sync both (install + remove)")
+        print("  (2) Add extra packages to a Brewfile")
+        print("  (3) Install missing packages")
+        print("  (4) Sync both (install + remove)")
         print("  (q) Quit")
-        
+
         try:
             choice = input("Enter your choice [q]: ").lower().strip()
         except (EOFError, KeyboardInterrupt):
             choice = "q"
             print()
-        
+
         if choice == "1" and asterisk_count > 0:
             say("Running cleanup...")
             self._run_cleanup(args, status_data)
-        elif choice == "2" and missing_count > 0:
+        elif choice == "2" and asterisk_count > 0:
+            say("Adding extra packages to Brewfile...")
+            self._run_adopt_packages(args, status_data)
+        elif choice == "3" and missing_count > 0:
             say("Running install...")
             self._run_install(args)
-        elif choice == "3" and (asterisk_count > 0 or missing_count > 0):
-            say("Running sync (install + cleanup)...")
+        elif choice == "4" and (asterisk_count > 0 or missing_count > 0):
+            say("Running sync (install + remove)...")
             if missing_count > 0:
                 self._run_install(args)
             if asterisk_count > 0:
                 self._run_cleanup(args, status_data)
         elif choice == "1" and asterisk_count == 0:
             warn("No extra packages to remove.")
-        elif choice == "2" and missing_count == 0:
+        elif choice == "2" and asterisk_count == 0:
+            warn("No extra packages to add.")
+        elif choice == "3" and missing_count == 0:
             warn("No missing packages to install.")
-        elif choice == "3" and asterisk_count == 0 and missing_count == 0:
+        elif choice == "4" and asterisk_count == 0 and missing_count == 0:
             warn("No packages need synchronization.")
         elif choice in ["q", ""]:
             say("Goodbye!")
         else:
             warn("Invalid choice.")
-    
-
-    def cmd_edit(self, args):
-        """Opens the Brewfile in the default editor."""
-        editor = os.environ.get("EDITOR", "vi")
-        say(f"Opening {self.brewfile} in {editor}...")
-        subprocess.run([editor, str(self.brewfile)])
-
 
     def cmd_add(self, args):
         """Installs a package and adds it to a Brewfile."""
@@ -758,7 +650,7 @@ def main():
         description="Interactive Brewfile manager - the modern way to manage Homebrew dependencies.",
         formatter_class=argparse.RawTextHelpFormatter,
     )
-    
+
     # Add top-level flags for the primary interactive interface
     parser.add_argument(
         "--include",
@@ -768,12 +660,12 @@ def main():
     parser.add_argument(
         "--all", action="store_true", help="Include all Brewfile.* files."
     )
-    
+
     # Add essential utility subcommands
     subparsers = parser.add_subparsers(
         dest="command", required=False, help="Utility commands"
     )
-    
+
     # Add package command
     add_parser = subparsers.add_parser("add", help="Install and add a package to a Brewfile")
     add_parser.add_argument("package_name", help="The name of the package to add")
@@ -782,30 +674,13 @@ def main():
         type=str,
         help="Short name of the Brewfile to add to (e.g., 'extra')",
     )
-    
+
     # Remove package command
     remove_parser = subparsers.add_parser("remove", help="Remove a package from a Brewfile interactively")
     remove_parser.add_argument("package_name", help="The name of the package to remove")
-    
-    # Edit command
-    subparsers.add_parser("edit", help="Open Brewfile in $EDITOR")
-    
-    # Dump command
-    dump_parser = subparsers.add_parser("dump", help="Update Brewfile from current system")
-    dump_parser.add_argument(
-        "--include",
-        type=str,
-        help="Include Brewfile.NAME (comma-separated for multiple)",
-    )
-    dump_parser.add_argument(
-        "--all", action="store_true", help="Include all Brewfile.* files"
-    )
-    dump_parser.add_argument(
-        "--force", action="store_true", help="Force overwrite of Brewfile(s)"
-    )
 
     args = parser.parse_args()
-    
+
     # If no subcommand specified, run interactive mode (primary interface)
     if args.command is None:
         manager.cmd_interactive(args)
