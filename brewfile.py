@@ -383,12 +383,41 @@ class BrewfileManager:
                         mas_name = line.split('"')[1]
                         packages['mas'].append(mas_name)
 
+            # Fallback: Check for packages missing from brew bundle dump but actually installed
+            # This can happen if packages were installed as dependencies
+            self._add_missing_installed_packages(packages)
+
             return packages
 
         except subprocess.CalledProcessError as e:
             die(f"Could not get system packages: {e}")
         finally:
             Path(temp_brewfile).unlink(missing_ok=True)
+
+    def _add_missing_installed_packages(self, packages: Dict[str, List[str]]) -> None:
+        """Add packages that are installed but missing from brew bundle dump."""
+        try:
+            # Get all installed formulae
+            result = subprocess.run(['brew', 'list', '--formula'], capture_output=True, text=True, check=True)
+            installed_brews = set(result.stdout.strip().split())
+            
+            # Get all installed casks  
+            result = subprocess.run(['brew', 'list', '--cask'], capture_output=True, text=True, check=True)
+            installed_casks = set(result.stdout.strip().split())
+            
+            # Add missing brews
+            current_brews = set(packages['brews'])
+            missing_brews = installed_brews - current_brews
+            packages['brews'].extend(list(missing_brews))
+            
+            # Add missing casks
+            current_casks = set(packages['casks'])
+            missing_casks = installed_casks - current_casks
+            packages['casks'].extend(list(missing_casks))
+            
+        except subprocess.CalledProcessError:
+            # If fallback detection fails, continue with what we have
+            pass
 
     def _check_machine_configured(self) -> bool:
         """Check if current machine is configured."""
@@ -524,7 +553,11 @@ class BrewfileManager:
         # Update installation status for configured packages
         system_packages = self._get_system_packages(clean_first=True)
         for pkg in configured_packages:
-            pkg_type_plural = f"{pkg.package_type}s"
+            # Convert package type to plural form for system_packages lookup
+            if pkg.package_type == 'mas':
+                pkg_type_plural = 'mas'  # MAS is already plural form in system_packages
+            else:
+                pkg_type_plural = f"{pkg.package_type}s"
             pkg.installed = pkg.name in system_packages.get(pkg_type_plural, [])
 
         print(f"\n{BLUE}Package Status for {self.machine_name}:{RESET}")
