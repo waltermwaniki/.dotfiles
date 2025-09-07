@@ -48,13 +48,27 @@
         "zed",
         "mos"
       ]
+    },
+    "OSXLT3QF7WY": {
+      "taps": [],
+      "brews": [
+        "xz",
+        "libusb"
+      ],
+      "casks": [
+        "pycharm",
+        "rectangle",
+        "iterm2",
+        "hiddenbar"
+      ]
     }
   },
   "machines": {
     "OSXLT3QF7WY": [
       "core",
       "dev",
-      "personal"
+      "personal",
+      "OSXLT3QF7WY"
     ]
   }
 }
