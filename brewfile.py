@@ -7,6 +7,7 @@ Uses JSON configuration with package groups and machine-aware installations,
 while leveraging brew bundle for all actual package operations.
 """
 
+import contextlib
 import json
 import os
 import socket
@@ -19,42 +20,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Optional, Union
 
-# ANSI colors (respect NO_COLOR and non-TTY)
-BLUE = "\033[1;34m"
-YELLOW = "\033[1;33m"
-RED = "\033[1;31m"
-GREEN = "\033[1;32m"
-GRAY = "\033[0;37m"
-RESET = "\033[0m"
-
-if "NO_COLOR" in os.environ or not sys.stdout.isatty():
-    BLUE = YELLOW = RED = GREEN = GRAY = RESET = ""
-
-
-def say(msg: str) -> None:
-    """Prints a message with blue prefix."""
-    print(f"{BLUE}===>{RESET} {msg}")
-
-
-def warn(msg: str) -> None:
-    """Prints a warning message."""
-    print(f"{YELLOW}[warn]{RESET} {msg}")
-
-
-def error(msg: str) -> None:
-    """Prints an error message."""
-    print(f"{RED}[error]{RESET} {msg}", file=sys.stderr)
-
-
-def success(msg: str) -> None:
-    """Prints a success message."""
-    print(f"{GREEN}[success]{RESET} {msg}")
-
-
-def die(msg: str) -> None:
-    """Prints an error and exits."""
-    error(msg)
-    sys.exit(1)
+from utils import AnsiColor, LoadingIndicator, die, error, say, success, warn
 
 
 class PackageType(Enum):
@@ -324,32 +290,6 @@ class BrewfileConfig:
         machine_groups = self.get_machine_groups(machine_name)
         return [pkg_info for group in machine_groups for pkg_info in self.package_infos.get(group, [])]
 
-        # packages = []
-        # seen_packages = set()  # Track (package_type, package_name) to avoid duplicates
-
-        # for group in machine_groups:
-        #     if group not in self.packages:
-        #         continue
-
-        #     group_data = self.packages[group]
-
-        #     # Process each package type
-        #     for pkg_type in PackageType:
-        #         package_list = getattr(group_data, pkg_type.plural)
-        #         for package in package_list:
-        #             package_key = (pkg_type.plural, package)
-        #             if package_key not in seen_packages:
-        #                 packages.append(
-        #                     PackageInfo(
-        #                         name=package,
-        #                         group=group,
-        #                         package_type=pkg_type,
-        #                     )
-        #                 )
-        #                 seen_packages.add(package_key)
-
-        # return packages
-
     def add_package(
         self,
         group_name: str,
@@ -368,7 +308,9 @@ class BrewfileConfig:
             self.save(config_file)
 
     def remove_package(self, package_name: str, config_file: Optional[Path] = None) -> Optional[PackageType]:
-        """Remove package from all groups where it exists (searches all package types) and auto-save. Returns the PackageType that was removed, or None if not found."""
+        """Remove package from all groups where it exists (searches all package types) and auto-save.
+        Returns the PackageType that was removed, or None if not found.
+        """
         found_package_type = None
         removed_from_any_group = False
 
@@ -451,27 +393,25 @@ class PackageCache:
     def refresh(self) -> list[PackageInfo]:
         """Refresh package cache using temporary brewfile."""
         # Clean up orphaned dependencies using brew autoremove
-        try:
-            subprocess.run(["brew", "autoremove"], check=False, capture_output=True)
-        except subprocess.CalledProcessError:
-            # Don't fail if cleanup fails
-            pass
+        with LoadingIndicator("Analyzing installed packages"):
+            with contextlib.suppress(subprocess.CalledProcessError):
+                subprocess.run(["brew", "autoremove"], check=False, capture_output=True)
 
-        with self._temp_system_brewfile() as temp_path:
-            package_dict = Brew.Bundle.list_packages(temp_path)
+            with self._temp_system_brewfile() as temp_path:
+                package_dict = Brew.Bundle.list_packages(temp_path)
 
-            # Convert dict to PackageInfo list
-            packages = []
-            for pkg_type in PackageType:
-                for pkg_name in package_dict[pkg_type.plural]:
-                    packages.append(
-                        PackageInfo(
-                            name=pkg_name, group=None, package_type=pkg_type, installed=InstallationStatus.INSTALLED
+                # Convert dict to PackageInfo list
+                packages = []
+                for pkg_type in PackageType:
+                    for pkg_name in package_dict[pkg_type.plural]:
+                        packages.append(
+                            PackageInfo(
+                                name=pkg_name, group=None, package_type=pkg_type, installed=InstallationStatus.INSTALLED
+                            )
                         )
-                    )
 
-            self._installed_packages = packages
-            return packages
+                self._installed_packages = packages
+                return packages
 
     @contextmanager
     def _temp_system_brewfile(self):
@@ -547,37 +487,38 @@ class Brew:
     @staticmethod
     def detect_package_type(package_name: str) -> PackageType:
         """Auto-detect if package is a cask or formula."""
-        try:
-            # First check if it's a cask
-            result = subprocess.run(
-                ["brew", "search", "--cask", package_name],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            # If exact match found in cask search, it's a cask
-            if f"\n{package_name}\n" in result.stdout or result.stdout.strip() == package_name:
-                return PackageType.CASK
+        with LoadingIndicator(f"Detecting package type for '{package_name}'"):
+            try:
+                # First check if it's a cask
+                result = subprocess.run(
+                    ["brew", "search", "--cask", package_name],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                # If exact match found in cask search, it's a cask
+                if f"\n{package_name}\n" in result.stdout or result.stdout.strip() == package_name:
+                    return PackageType.CASK
 
-            # Check if it's a formula
-            result = subprocess.run(
-                ["brew", "search", package_name],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            # If exact match found in formula search, it's a formula
-            if f"\n{package_name}\n" in result.stdout or result.stdout.strip() == package_name:
+                # Check if it's a formula
+                result = subprocess.run(
+                    ["brew", "search", package_name],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                # If exact match found in formula search, it's a formula
+                if f"\n{package_name}\n" in result.stdout or result.stdout.strip() == package_name:
+                    return PackageType.BREW
+
+                # If no exact match, default to formula
+                warn(f"Could not find exact match for '{package_name}', assuming it's a formula")
                 return PackageType.BREW
 
-            # If no exact match, default to formula
-            warn(f"Could not find exact match for '{package_name}', assuming it's a formula")
-            return PackageType.BREW
-
-        except subprocess.CalledProcessError:
-            # If search fails, default to formula
-            warn(f"Package search failed for '{package_name}', assuming it's a formula")
-            return PackageType.BREW
+            except subprocess.CalledProcessError:
+                # If search fails, default to formula
+                warn(f"Package search failed for '{package_name}', assuming it's a formula")
+                return PackageType.BREW
 
 
 def compare_packages(
@@ -739,7 +680,7 @@ class BrewfileManager:
         groups = self.machine_groups
 
         # Display the status
-        print(f"\n{BLUE}Package Status for {self.machine_name}:{RESET}")
+        print(f"\n{AnsiColor.BLUE}Package Status for {self.machine_name}:{AnsiColor.RESET}")
         print(f"Groups: {', '.join(groups)}")
 
         # Group packages by type for display
@@ -759,9 +700,11 @@ class BrewfileManager:
                 print(f"\n{package_type.title()}:")
                 for pkg in sorted(packages, key=lambda x: x.name):
                     if pkg.installed == InstallationStatus.INSTALLED:
-                        print(f"  ✓ {pkg.name} {GRAY}({pkg.group}){RESET}")
+                        print(f"  ✓ {pkg.name} {AnsiColor.GRAY}({pkg.group}){AnsiColor.RESET}")
                     else:
-                        print(f"  {RED}✗{RESET} {pkg.name} {GRAY}({pkg.group}) - missing{RESET}")
+                        print(
+                            f"  {AnsiColor.RED}✗{AnsiColor.RESET} {pkg.name} {AnsiColor.GRAY}({pkg.group}) - missing{AnsiColor.RESET}"
+                        )
 
             # Show extra packages
             extra = extra_by_type.get(package_type, [])
@@ -771,7 +714,9 @@ class BrewfileManager:
                 else:  # No configured packages, so this is the main section
                     print(f"\n{package_type.title()}:")
                 for package in sorted(extra, key=lambda x: x.name):
-                    print(f"  {BLUE}+{RESET} {package.name} {GRAY}- not in config{RESET}")
+                    print(
+                        f"  {AnsiColor.BLUE}+{AnsiColor.RESET} {package.name} {AnsiColor.GRAY}- not in config{AnsiColor.RESET}"
+                    )
 
         # Summary counts
         total_missing = len(missing_packages_list)
@@ -779,9 +724,9 @@ class BrewfileManager:
 
         print("\nSummary:")
         if total_missing > 0:
-            print(f"  {RED}✗{RESET} {total_missing} package(s) need installation")
+            print(f"  {AnsiColor.RED}✗{AnsiColor.RESET} {total_missing} package(s) need installation")
         if total_extra > 0:
-            print(f"  {BLUE}+{RESET} {total_extra} extra package(s) not in current config")
+            print(f"  {AnsiColor.BLUE}+{AnsiColor.RESET} {total_extra} extra package(s) not in current config")
 
         if total_missing == 0 and total_extra == 0:
             success("All packages synchronized!")
@@ -805,9 +750,9 @@ class BrewfileManager:
             success("All packages are already synchronized!")
             return
 
-        print(f"\n{YELLOW}Sync + Adopt Summary:{RESET}")
+        print(f"\n{AnsiColor.YELLOW}Sync + Adopt Summary:{AnsiColor.RESET}")
         if missing_packages:
-            print(f"\n{GREEN}INSTALL ({len(missing_packages)}):{RESET}")
+            print(f"\n{AnsiColor.GREEN}INSTALL ({len(missing_packages)}):{AnsiColor.RESET}")
             missing_by_type = {
                 pkg_type.plural: [p for p in missing_packages if p.package_type == pkg_type] for pkg_type in PackageType
             }
@@ -816,7 +761,7 @@ class BrewfileManager:
                     print(f"  {pkg_type.title()}: {', '.join(p.name for p in packages)}")
 
         if extra_packages:
-            print(f"\n{BLUE}ADOPT ({len(extra_packages)}):{RESET}")
+            print(f"\n{AnsiColor.BLUE}ADOPT ({len(extra_packages)}):{AnsiColor.RESET}")
             extra_by_type = {
                 pkg_type.plural: [p for p in extra_packages if p.package_type == pkg_type] for pkg_type in PackageType
             }
@@ -874,9 +819,9 @@ class BrewfileManager:
             success("All packages are already synchronized!")
             return
 
-        print(f"\n{YELLOW}Sync + Cleanup Summary:{RESET}")
+        print(f"\n{AnsiColor.YELLOW}Sync + Cleanup Summary:{AnsiColor.RESET}")
         if missing_packages_list:
-            print(f"\n{GREEN}INSTALL ({len(missing_packages_list)}):{RESET}")
+            print(f"\n{AnsiColor.GREEN}INSTALL ({len(missing_packages_list)}):{AnsiColor.RESET}")
             # Group by type for display
             missing_by_type = {
                 pkg_type.plural: [p.name for p in missing_packages_list if p.package_type == pkg_type]
@@ -887,7 +832,7 @@ class BrewfileManager:
                     print(f"  {pkg_type.title()}: {', '.join(packages)}")
 
         if extra_packages_list:
-            print(f"\n{RED}⚠ REMOVE ({len(extra_packages_list)}):{RESET}")
+            print(f"\n{AnsiColor.RED}⚠ REMOVE ({len(extra_packages_list)}):{AnsiColor.RESET}")
             # Group by type for display
             extra_by_type = {
                 pkg_type.plural: [p.name for p in extra_packages_list if p.package_type == pkg_type]
@@ -899,7 +844,7 @@ class BrewfileManager:
 
         print("\nThis will install missing packages and remove extras from your system.")
         if extra_packages_list:
-            print(f"{RED}WARNING: This will uninstall packages from your system!{RESET}")
+            print(f"{AnsiColor.RED}WARNING: This will uninstall packages from your system!{AnsiColor.RESET}")
 
         try:
             confirm = input("\nProceed? (y/N): ").lower().strip()
@@ -1133,20 +1078,22 @@ class BrewfileManager:
 
 def show_help():
     """Display comprehensive help information."""
-    print(f"{BLUE}BrewfileManager{RESET} - Intelligent Homebrew package management")
+    print(f"{AnsiColor.BLUE}BrewfileManager{AnsiColor.RESET} - Intelligent Homebrew package management")
     print("\nUSAGE:")
     print("  brewfile [COMMAND] [OPTIONS]")
     print("  brewfile                    # Interactive mode (default)")
 
     print("\nCOMMANDS:")
-    print(f"  {GREEN}init{RESET}                    Initialize machine configuration")
-    print(f"  {GREEN}status{RESET}                  Show package status and synchronization state")
-    print(f"  {GREEN}sync-adopt{RESET}              Install missing packages + adopt extras")
-    print(f"  {GREEN}sync-cleanup{RESET}            Install missing packages + remove extras")
-    print(f"  {GREEN}add{RESET} <package> [--cask]   Add package to configuration and install")
-    print(f"  {GREEN}remove{RESET} <package>        Remove package from system and configuration (idempotent)")
-    print(f"  {GREEN}edit{RESET}                    Open configuration file in editor")
-    print(f"  {GREEN}help{RESET}, -h, --help        Show this help message")
+    print(f"  {AnsiColor.GREEN}init{AnsiColor.RESET}                    Initialize machine configuration")
+    print(f"  {AnsiColor.GREEN}status{AnsiColor.RESET}                  Show package status and synchronization state")
+    print(f"  {AnsiColor.GREEN}sync-adopt{AnsiColor.RESET}              Install missing packages + adopt extras")
+    print(f"  {AnsiColor.GREEN}sync-cleanup{AnsiColor.RESET}            Install missing packages + remove extras")
+    print(f"  {AnsiColor.GREEN}add{AnsiColor.RESET} <package> [--cask]   Add package to configuration and install")
+    print(
+        f"  {AnsiColor.GREEN}remove{AnsiColor.RESET} <package>        Remove package from system and configuration (idempotent)"
+    )
+    print(f"  {AnsiColor.GREEN}edit{AnsiColor.RESET}                    Open configuration file in editor")
+    print(f"  {AnsiColor.GREEN}help{AnsiColor.RESET}, -h, --help        Show this help message")
 
     print("\nEXAMPLES:")
     print("  brewfile status              # Show current package status")
@@ -1157,8 +1104,8 @@ def show_help():
     print("  brewfile sync-cleanup        # Sync packages and remove extras (destructive)")
 
     print("\nCONFIGURATION:")
-    print(f"  Config file: {GRAY}~/.config/brewfile.json{RESET}")
-    print(f"  Brewfile:    {GRAY}~/Brewfile{RESET}")
+    print(f"  Config file: {AnsiColor.GRAY}~/.config/brewfile.json{AnsiColor.RESET}")
+    print(f"  Brewfile:    {AnsiColor.GRAY}~/Brewfile{AnsiColor.RESET}")
 
     print("\nMORE INFO:")
     print("  - Uses JSON configuration with package groups")
@@ -1208,7 +1155,7 @@ def main():
         manager.cmd_edit()
     else:
         error(f"Unknown command: {command}")
-        print(f"Run '{GREEN}brewfile help{RESET}' to see available commands.")
+        print(f"Run '{AnsiColor.GREEN}brewfile help{AnsiColor.RESET}' to see available commands.")
         sys.exit(1)
 
 

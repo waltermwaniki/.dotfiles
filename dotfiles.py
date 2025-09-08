@@ -8,7 +8,6 @@ adoption, and status reporting.
 """
 
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -16,41 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal, TypedDict
 
-# ANSI colors (respect NO_COLOR and non-TTY)
-BLUE = "\033[1;34m"
-YELLOW = "\033[1;33m"
-RED = "\033[1;31m"
-GREEN = "\033[1;32m"
-RESET = "\033[0m"
-
-if "NO_COLOR" in os.environ or not sys.stdout.isatty():
-    BLUE = YELLOW = RED = GREEN = RESET = ""
-
-
-def say(msg):
-    """Prints a message to the console with a blue '===>' prefix."""
-    print(f"{BLUE}===>{RESET} {msg}")
-
-
-def warn(msg):
-    """Prints a warning message to the console."""
-    print(f"{YELLOW}[warn]{RESET} {msg}")
-
-
-def error(msg):
-    """Prints an error message to the console."""
-    print(f"{RED}[error]{RESET} {msg}", file=sys.stderr)
-
-
-def success(msg):
-    """Prints a success message to the console."""
-    print(f"{GREEN}[success]{RESET} {msg}")
-
-
-def die(msg):
-    """Prints an error message and exits the script."""
-    error(msg)
-    sys.exit(1)
+from utils import AnsiColor, die, error, say, success, warn
 
 
 class DotfilesStatus(TypedDict):
@@ -258,7 +223,7 @@ class DotfilesManager:
         broken_symlinks = status_data["broken_symlinks"]
         applied_files = status_data["applied_files"]
 
-        print(f"\n{BLUE}Dotfiles Status:{RESET}")
+        print(f"\n{AnsiColor.BLUE}Dotfiles Status:{AnsiColor.RESET}")
         print(f"  Target: {target}")
         print(f"  ✓ {len(applied_files)} files properly linked")
 
@@ -277,7 +242,7 @@ class DotfilesManager:
             say("No conflicts to resolve.")
             return True
 
-        print(f"\n{YELLOW}Conflicting files:{RESET}")
+        print(f"\n{AnsiColor.YELLOW}Conflicting files:{AnsiColor.RESET}")
         for conflict in conflicts:
             print(f"  {conflict}")
 
@@ -402,7 +367,7 @@ class DotfilesManager:
             say("No broken symlinks to fix.")
             return True
 
-        print(f"\n{YELLOW}Broken symlinks:{RESET}")
+        print(f"\n{AnsiColor.YELLOW}Broken symlinks:{AnsiColor.RESET}")
         for link in broken_symlinks:
             print(f"  {link}")
 
@@ -411,7 +376,7 @@ class DotfilesManager:
 
     def _show_detailed_conflicts(self, conflicts, target):
         """Show detailed information about conflicts."""
-        print(f"\n{YELLOW}Detailed conflict information:{RESET}")
+        print(f"\n{AnsiColor.YELLOW}Detailed conflict information:{AnsiColor.RESET}")
 
         for conflict in conflicts:
             conflict_path = target / conflict
@@ -458,7 +423,7 @@ class DotfilesManager:
             return
 
         # Show issue summary
-        print(f"\n{YELLOW}Issues found:{RESET}")
+        print(f"\n{AnsiColor.YELLOW}Issues found:{AnsiColor.RESET}")
         if conflicts:
             print(f"  * {len(conflicts)} file(s) have conflicts (existing files)")
         if broken_symlinks:
