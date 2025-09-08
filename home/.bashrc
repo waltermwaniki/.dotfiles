@@ -14,11 +14,34 @@ elif command -v brew >/dev/null 2>&1 && [ -f "$(brew --prefix)/etc/bash_completi
   source "$(brew --prefix)/etc/bash_completion"
 fi
 
-# Bash-specific fzf integration
-[ -f ~/.fzf.bash ] && source ~/.fzf.bash
+# fzf - fuzzy finder integration
+if command -v fzf >/dev/null 2>&1; then
+  # Source fzf shell integration if available
+  if [ -f ~/.fzf.bash ]; then
+    source ~/.fzf.bash
+  elif command -v brew >/dev/null 2>&1; then
+    # Try to source from brew installation
+    local brew_prefix="$(brew --prefix)"
+    [ -f "$brew_prefix/opt/fzf/shell/key-bindings.bash" ] && source "$brew_prefix/opt/fzf/shell/key-bindings.bash"
+    [ -f "$brew_prefix/opt/fzf/shell/completion.bash" ] && source "$brew_prefix/opt/fzf/shell/completion.bash"
+  fi
+
+  # fzf configuration (same as zsh)
+  export FZF_DEFAULT_OPTS="--cycle --height=-15 --min-height=40 --layout=reverse --info=default --border=rounded"
+
+  # Use fd for faster, .gitignore-aware file search
+  if command -v fd >/dev/null 2>&1; then
+    export FZF_DEFAULT_COMMAND="fd --type f --hidden --exclude .git"
+    export FZF_CTRL_T_COMMAND="$FZF_DEFAULT_COMMAND"
+  fi
+fi
 
 # Load zoxide if available (bash version)
 command -v zoxide >/dev/null 2>&1 && eval "$(zoxide init --cmd cd bash)"
+
+# Load completion systems for dev tools
+command -v gh >/dev/null 2>&1 && eval "$(gh completion --shell bash)"
+command -v pnpm >/dev/null 2>&1 && source <(pnpm completion bash)
 
 # Initialize Starship prompt
 command -v starship >/dev/null 2>&1 && eval "$(starship init bash)"

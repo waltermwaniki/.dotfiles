@@ -41,9 +41,8 @@
       "casks": [
         "warp",
         "zed",
-        "tableplus",
-        "postman",
-	"visual-studio-code"
+        "chatgpt",
+        "visual-studio-code"
       ],
       "mas": []
     },
@@ -51,7 +50,6 @@
       "taps": [],
       "brews": [],
       "casks": [
-        "mos",
         "logi-options+",
         "caffeine"
       ],
@@ -73,13 +71,7 @@
         "xz"
       ],
       "casks": [
-        "iterm2",
-        "pycharm",
-        "rectangle",
-        "github",
-        "epic-games",
-        "hiddenbar",
-        "steam"
+        "github"
       ],
       "mas": [
         "GarageBand::682658836",

@@ -25,15 +25,26 @@ fi
 
 # -------- Initialize utility tools -------
 
-if [ -f ~/.fzf.zsh ]; then
-  source ~/.fzf.zsh
+# fzf - fuzzy finder integration
+if command -v fzf >/dev/null 2>&1; then
+  # Source fzf shell integration if available
+  if [ -f ~/.fzf.zsh ]; then
+    source ~/.fzf.zsh
+  elif command -v brew >/dev/null 2>&1; then
+    # Try to source from brew installation
+    local brew_prefix="$(brew --prefix)"
+    [ -f "$brew_prefix/opt/fzf/shell/key-bindings.zsh" ] && source "$brew_prefix/opt/fzf/shell/key-bindings.zsh"
+    [ -f "$brew_prefix/opt/fzf/shell/completion.zsh" ] && source "$brew_prefix/opt/fzf/shell/completion.zsh"
+  fi
 
-  # Consolidate standard fzf options
+  # fzf configuration
   export FZF_DEFAULT_OPTS="--cycle --height=-15 --min-height=40 --layout=reverse --info=default --border=rounded"
 
   # Use fd for faster, .gitignore-aware file search
-  export FZF_DEFAULT_COMMAND="fd --type f --hidden --exclude .git"
-  export FZF_CTRL_T_COMMAND="$FZF_DEFAULT_COMMAND"
+  if command -v fd >/dev/null 2>&1; then
+    export FZF_DEFAULT_COMMAND="fd --type f --hidden --exclude .git"
+    export FZF_CTRL_T_COMMAND="$FZF_DEFAULT_COMMAND"
+  fi
 
   # Aliases
   alias fzf='fzf'
@@ -42,12 +53,18 @@ if [ -f ~/.fzf.zsh ]; then
   # Faster directory navigation with fd
   fcd() {
     local dir
-    dir=$(fd --type d --hidden --exclude .git | fzfp +m) && cd "$dir"
+    if command -v fd >/dev/null 2>&1; then
+      dir=$(fd --type d --hidden --exclude .git | fzfp +m) && cd "$dir"
+    else
+      dir=$(find . -type d | fzf +m) && cd "$dir"
+    fi
   }
 fi
 
-# Load uv completion if available
-command -v uv &>/dev/null && eval "$(uv generate-shell-completion zsh)"
+# Load completion systems for dev tools
+command -v uv >/dev/null 2>&1 && eval "$(uv generate-shell-completion zsh)"
+command -v gh >/dev/null 2>&1 && eval "$(gh completion --shell zsh)"
+command -v pnpm >/dev/null 2>&1 && source <(pnpm completion zsh)
 
 # Load zoxide if available
 command -v zoxide >/dev/null 2>&1 && eval "$(zoxide init --cmd cd zsh)"

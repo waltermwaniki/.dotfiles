@@ -13,8 +13,9 @@ import socket
 import subprocess
 import sys
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Optional
 
 # ANSI colors (respect NO_COLOR and non-TTY)
 BLUE = "\033[1;34m"
@@ -54,6 +55,72 @@ def die(msg: str) -> None:
     sys.exit(1)
 
 
+class PackageType(Enum):
+    """Package types supported by Homebrew."""
+
+    TAP = "tap"
+    BREW = "brew"  # Formula
+    CASK = "cask"
+    MAS = "mas"  # Mac App Store
+
+    @property
+    def plural(self) -> str:
+        """Get the plural form used in configuration storage."""
+        if self == PackageType.TAP:
+            return "taps"
+        elif self == PackageType.BREW:
+            return "brews"
+        elif self == PackageType.CASK:
+            return "casks"
+        elif self == PackageType.MAS:
+            return "mas"
+        return self.value + "s"
+
+    @classmethod
+    def from_plural(cls, plural: str) -> "PackageType":
+        """Create PackageType from plural form."""
+        if plural == "taps":
+            return cls.TAP
+        elif plural == "brews":
+            return cls.BREW
+        elif plural == "casks":
+            return cls.CASK
+        elif plural == "mas":
+            return cls.MAS
+        raise ValueError(f"Unknown plural package type: {plural}")
+
+    @classmethod
+    def from_string(cls, value: str) -> "PackageType":
+        """Create PackageType from various string representations."""
+        value = value.lower().strip()
+        if value in ("formula", "brew"):
+            return cls.BREW
+        elif value == "cask":
+            return cls.CASK
+        elif value == "tap":
+            return cls.TAP
+        elif value == "mas":
+            return cls.MAS
+        # Try plural forms
+        try:
+            return cls.from_plural(value)
+        except ValueError:
+            pass
+        # Try direct enum value
+        for pkg_type in cls:
+            if pkg_type.value == value:
+                return pkg_type
+        raise ValueError(f"Unknown package type: {value}")
+
+
+class InstallationStatus(Enum):
+    """Installation status for packages."""
+
+    UNKNOWN = "unknown"
+    INSTALLED = "installed"
+    NOT_INSTALLED = "not_installed"
+
+
 @dataclass
 class PackageGroup:
     """Represents a group of packages with taps, brews, casks, and mas apps."""
@@ -72,48 +139,61 @@ class PackageGroup:
             "mas": self.mas.copy(),
         }
 
-    def add_package(self, package_type: str, package_name: str) -> None:
+    def add_package(self, package_type: PackageType, package_name: str) -> None:
         """Add a package to this group."""
-        if package_type == "taps":
+        if package_type == PackageType.TAP:
             if package_name not in self.taps:
                 self.taps.append(package_name)
-        elif package_type == "brews":
+        elif package_type == PackageType.BREW:
             if package_name not in self.brews:
                 self.brews.append(package_name)
-        elif package_type == "casks":
+        elif package_type == PackageType.CASK:
             if package_name not in self.casks:
                 self.casks.append(package_name)
-        elif package_type == "mas":
+        elif package_type == PackageType.MAS:
             if package_name not in self.mas:
                 self.mas.append(package_name)
         else:
             raise ValueError(f"Unknown package type: {package_type}")
 
-    def remove_package(self, package_type: str, package_name: str) -> bool:
+    def remove_package(self, package_type: PackageType, package_name: str) -> bool:
         """Remove a package from this group. Returns True if removed."""
-        if package_type == "taps" and package_name in self.taps:
+        if package_type == PackageType.TAP and package_name in self.taps:
             self.taps.remove(package_name)
             return True
-        elif package_type == "brews" and package_name in self.brews:
+        elif package_type == PackageType.BREW and package_name in self.brews:
             self.brews.remove(package_name)
             return True
-        elif package_type == "casks" and package_name in self.casks:
+        elif package_type == PackageType.CASK and package_name in self.casks:
             self.casks.remove(package_name)
             return True
-        elif package_type == "mas" and package_name in self.mas:
+        elif package_type == PackageType.MAS and package_name in self.mas:
             self.mas.remove(package_name)
             return True
         return False
 
+    def get_packages_of_type(self, package_type: PackageType) -> list[str]:
+        """Get packages of a specific type."""
+        if package_type == PackageType.TAP:
+            return self.taps.copy()
+        elif package_type == PackageType.BREW:
+            return self.brews.copy()
+        elif package_type == PackageType.CASK:
+            return self.casks.copy()
+        elif package_type == PackageType.MAS:
+            return self.mas.copy()
+        else:
+            raise ValueError(f"Unknown package type: {package_type}")
+
 
 @dataclass
 class PackageInfo:
-    """Information about a package including its status and metadata."""
+    """Information about a package including its metadata and installation status."""
 
     name: str
     group: str
-    package_type: str  # 'tap', 'brew', 'cask', 'mas'
-    installed: bool
+    package_type: PackageType
+    installed: InstallationStatus = field(default_factory=lambda: InstallationStatus.UNKNOWN)
 
 
 @dataclass
@@ -183,6 +263,11 @@ class BrewfileConfig:
             "machines": self.machines,
         }
 
+    def ensure_group_exists(self, group_name: str) -> None:
+        """Ensure a package group exists."""
+        if group_name not in self.packages:
+            self.packages[group_name] = PackageGroup()
+
     def get_machine_groups(self, machine_name: str) -> list[str]:
         """Get package groups for a specific machine."""
         groups = self.machines.get(machine_name, [])
@@ -199,106 +284,111 @@ class BrewfileConfig:
         self.machines[machine_name] = groups
 
     @property
-    def available_groups(self) -> list[str]:
-        """Get all available package groups."""
-        return list(self.packages.keys())
+    def package_infos(self) -> dict[str, list[PackageInfo]]:
+        """Rebuild the package infos cache."""
+        seen_packages = set()  # Track (package_type, package_name) to avoid duplicates
 
-    def ensure_group_exists(self, group_name: str) -> None:
-        """Ensure a package group exists."""
-        if group_name not in self.packages:
-            self.packages[group_name] = PackageGroup()
+        packages: dict[str, list[PackageInfo]] = {}
+        for group in self.packages:
+            group_data = self.packages[group]
+            # Process each package type
+            for pkg_type in PackageType:
+                package_list = getattr(group_data, pkg_type.plural)
+                for package in package_list:
+                    package_key = (pkg_type.plural, package)
+                    if package_key not in seen_packages:
+                        if group not in packages:
+                            packages[group] = []
+                        packages[group].append(
+                            PackageInfo(
+                                name=package,
+                                group=group,
+                                package_type=pkg_type,
+                            )
+                        )
+                        seen_packages.add(package_key)
+        return packages
 
-    def add_package_to_group(
-        self, group_name: str, package_type: str, package_name: str, config_file: Optional[Path] = None
+    def get_package_info(self, package_name: str) -> Optional[PackageInfo]:
+        """Get PackageInfo for a specific package across all groups, or None if not found."""
+        for pkg_infos in self.package_infos.values():
+            for pkg_info in pkg_infos:
+                if pkg_info.name == package_name:
+                    return pkg_info
+        return None
+
+    def get_machine_packages(self, machine_name: str) -> list[PackageInfo]:
+        """Get all packages for a specific machine as PackageInfo objects."""
+        machine_groups = self.get_machine_groups(machine_name)
+        return [pkg_info for group in machine_groups for pkg_info in self.package_infos.get(group, [])]
+
+        # packages = []
+        # seen_packages = set()  # Track (package_type, package_name) to avoid duplicates
+
+        # for group in machine_groups:
+        #     if group not in self.packages:
+        #         continue
+
+        #     group_data = self.packages[group]
+
+        #     # Process each package type
+        #     for pkg_type in PackageType:
+        #         package_list = getattr(group_data, pkg_type.plural)
+        #         for package in package_list:
+        #             package_key = (pkg_type.plural, package)
+        #             if package_key not in seen_packages:
+        #                 packages.append(
+        #                     PackageInfo(
+        #                         name=package,
+        #                         group=group,
+        #                         package_type=pkg_type,
+        #                     )
+        #                 )
+        #                 seen_packages.add(package_key)
+
+        # return packages
+
+    def add_package(
+        self,
+        group_name: str,
+        package_type: PackageType,
+        package_name: str,
+        config_file: Optional[Path] = None,
     ) -> None:
         """Add a single package to a specific group and auto-save."""
         self.ensure_group_exists(group_name)
         group = self.packages[group_name]
 
-        # Convert package_type if needed (cask -> casks, etc.)
-        if package_type == "cask":
-            group.add_package("casks", package_name)
-        elif package_type == "formula" or package_type == "brew":
-            group.add_package("brews", package_name)
-        elif package_type == "tap":
-            group.add_package("taps", package_name)
-        elif package_type == "mas":
-            group.add_package("mas", package_name)
-        else:
-            group.add_package(package_type + "s" if not package_type.endswith("s") else package_type, package_name)
+        group.add_package(package_type, package_name)
 
         # Auto-save if config_file provided
         if config_file:
             self.save(config_file)
 
-    def remove_package_from_groups(
-        self, package_name: str, package_type: str, config_file: Optional[Path] = None
-    ) -> list[str]:
-        """Remove package from all groups where it exists and auto-save. Returns list of groups it was removed from."""
-        removed_from_groups = []
+    def remove_package(self, package_name: str, config_file: Optional[Path] = None) -> Optional[PackageType]:
+        """Remove package from all groups where it exists (searches all package types) and auto-save. Returns the PackageType that was removed, or None if not found."""
+        found_package_type = None
+        removed_from_any_group = False
 
-        # Search all groups for the package
+        # Search all groups and all package types for the package
         for group_name, group in self.packages.items():
-            if package_type == "cask":
-                if group.remove_package("casks", package_name):
-                    removed_from_groups.append(group_name)
-            elif package_type == "formula" or package_type == "brew":
-                if group.remove_package("brews", package_name):
-                    removed_from_groups.append(group_name)
-            elif package_type == "tap":
-                if group.remove_package("taps", package_name):
-                    removed_from_groups.append(group_name)
-            elif package_type == "mas":
-                if group.remove_package("mas", package_name):
-                    removed_from_groups.append(group_name)
+            for package_type in PackageType:
+                if group.remove_package(package_type, package_name):
+                    found_package_type = package_type
+                    removed_from_any_group = True
 
         # Auto-save if config_file provided and something was removed
-        if removed_from_groups and config_file:
+        if removed_from_any_group and config_file:
             self.save(config_file)
 
-        return removed_from_groups
-
-    def collect_packages_for_groups(self, groups: list[str]) -> list[PackageInfo]:
-        """Collect all packages for given groups with status information."""
-        packages = []
-        seen_packages = set()  # Track (package_type, package_name) to avoid duplicates
-
-        for group in groups:
-            if group not in self.packages:
-                continue
-
-            group_data = self.packages[group]
-
-            # Process each package type
-            for package_type in ["taps", "brews", "casks", "mas"]:
-                package_list = getattr(group_data, package_type)
-                for package in package_list:
-                    package_key = (package_type, package)
-                    if package_key not in seen_packages:
-                        # Handle package type naming (remove 's' for most, keep 'mas' as 'mas')
-                        display_type = package_type[:-1] if package_type != "mas" else "mas"
-                        packages.append(
-                            PackageInfo(
-                                name=package,
-                                group=group,
-                                package_type=display_type,
-                                installed=False,  # Will be updated by caller
-                            )
-                        )
-                        seen_packages.add(package_key)
-
-        return packages
+        return found_package_type
 
 
 class PackageAnalyzer:
     """Handles all package detection, analysis, and state management."""
 
-    def __init__(
-        self,
-        configured_packages: Union[list[PackageInfo], None] = None,
-    ):
+    def __init__(self):
         """Initialize analyzer with lazy loading."""
-        self.configured_packages = configured_packages or []
         self._installed_packages = None  # Lazy-loaded
 
     @property
@@ -325,8 +415,27 @@ class PackageAnalyzer:
             self._installed_packages = self._get_brewfile_packages()
         except subprocess.CalledProcessError as e:
             die(f"Could not get system packages: {e}")
-            self._installed_packages = {"taps": [], "brews": [], "casks": [], "mas": []}
+            self._installed_packages = {pkg_type.plural: [] for pkg_type in PackageType}
         return self._installed_packages
+
+    def update_package_status(self, packages: list[PackageInfo]) -> None:
+        """Update installation status for a list of packages."""
+        for pkg in packages:
+            # Use the plural form for installed_packages lookup
+            pkg_type_plural = pkg.package_type.plural
+
+            if pkg.package_type == PackageType.MAS:
+                # For MAS apps, check if the app name (without ID) is installed
+                if "::" in pkg.name:
+                    app_name = pkg.name.split("::")[0]
+                    is_installed = app_name in self.installed_packages.get(pkg_type_plural, [])
+                else:
+                    is_installed = pkg.name in self.installed_packages.get(pkg_type_plural, [])
+            else:
+                is_installed = pkg.name in self.installed_packages.get(pkg_type_plural, [])
+
+            # Set installation status using enum
+            pkg.installed = InstallationStatus.INSTALLED if is_installed else InstallationStatus.NOT_INSTALLED
 
     def _dump_brewfile_from_system(self) -> None:
         """Generate Brewfile from current system state (all installed packages)."""
@@ -338,7 +447,7 @@ class PackageAnalyzer:
     def _get_brewfile_packages(self) -> dict[str, list[str]]:
         """Get packages from Brewfile using brew bundle list + fallback for commented MAS apps."""
         try:
-            packages = {"taps": [], "brews": [], "casks": [], "mas": []}
+            packages = {pkg_type.plural: [] for pkg_type in PackageType}
 
             # Get taps
             result = subprocess.run(
@@ -347,7 +456,9 @@ class PackageAnalyzer:
                 text=True,
                 check=True,
             )
-            packages["taps"] = [line.strip() for line in result.stdout.strip().split("\n") if line.strip()]
+            packages[PackageType.TAP.plural] = [
+                line.strip() for line in result.stdout.strip().split("\n") if line.strip()
+            ]
 
             # Get formulas
             result = subprocess.run(
@@ -356,7 +467,9 @@ class PackageAnalyzer:
                 text=True,
                 check=True,
             )
-            packages["brews"] = [line.strip() for line in result.stdout.strip().split("\n") if line.strip()]
+            packages[PackageType.BREW.plural] = [
+                line.strip() for line in result.stdout.strip().split("\n") if line.strip()
+            ]
 
             # Get casks
             result = subprocess.run(
@@ -365,7 +478,9 @@ class PackageAnalyzer:
                 text=True,
                 check=True,
             )
-            packages["casks"] = [line.strip() for line in result.stdout.strip().split("\n") if line.strip()]
+            packages[PackageType.CASK.plural] = [
+                line.strip() for line in result.stdout.strip().split("\n") if line.strip()
+            ]
 
             # Get mas apps
             result = subprocess.run(
@@ -374,28 +489,27 @@ class PackageAnalyzer:
                 text=True,
                 check=True,
             )
-            packages["mas"] = [line.strip() for line in result.stdout.strip().split("\n") if line.strip()]
+            packages[PackageType.MAS.plural] = [
+                line.strip() for line in result.stdout.strip().split("\n") if line.strip()
+            ]
 
             return packages
         except subprocess.CalledProcessError:
             # If brew bundle list fails, fall back to empty
-            return {"taps": [], "brews": [], "casks": [], "mas": []}
+            return {pkg_type.plural: [] for pkg_type in PackageType}
 
     def get_missing_packages(self, configured_packages: list[PackageInfo]) -> dict[str, list[str]]:
         """Get packages that are configured but not installed."""
-        missing = {"taps": [], "brews": [], "casks": [], "mas": []}
+        missing = {pkg_type.plural: [] for pkg_type in PackageType}
 
         # Group configured packages by type
         packages_by_type = {
-            "taps": [p for p in configured_packages if p.package_type == "tap"],
-            "brews": [p for p in configured_packages if p.package_type == "brew"],
-            "casks": [p for p in configured_packages if p.package_type == "cask"],
-            "mas": [p for p in configured_packages if p.package_type == "mas"],
+            pkg_type.plural: [p for p in configured_packages if p.package_type == pkg_type] for pkg_type in PackageType
         }
 
         # Find missing packages for each type
         for pkg_type, packages in packages_by_type.items():
-            if pkg_type == "mas":
+            if pkg_type == PackageType.MAS.plural:
                 # For MAS apps, compare app names (without IDs) against installed apps
                 configured_names = set()
                 for p in packages:
@@ -426,19 +540,16 @@ class PackageAnalyzer:
 
     def get_extra_packages(self, configured_packages: list[PackageInfo]) -> dict[str, list[str]]:
         """Get packages that are installed but not configured."""
-        extra = {"taps": [], "brews": [], "casks": [], "mas": []}
+        extra = {pkg_type.plural: [] for pkg_type in PackageType}
 
         # Group configured packages by type
         packages_by_type = {
-            "taps": [p for p in configured_packages if p.package_type == "tap"],
-            "brews": [p for p in configured_packages if p.package_type == "brew"],
-            "casks": [p for p in configured_packages if p.package_type == "cask"],
-            "mas": [p for p in configured_packages if p.package_type == "mas"],
+            pkg_type.plural: [p for p in configured_packages if p.package_type == pkg_type] for pkg_type in PackageType
         }
 
         # Find extra packages for each type
         for pkg_type, packages in packages_by_type.items():
-            if pkg_type == "mas":
+            if pkg_type == PackageType.MAS.plural:
                 # For MAS apps, compare app names (without IDs) against installed apps
                 configured_names = set()
                 for p in packages:
@@ -457,21 +568,39 @@ class PackageAnalyzer:
 
         return extra
 
-    def update_package_status(self, packages: list[PackageInfo]) -> None:
-        """Update installation status for a list of packages."""
-        for pkg in packages:
-            # Convert package type to plural form for installed_packages lookup
-            if pkg.package_type == "mas":
-                pkg_type_plural = "mas"  # MAS is already plural form in installed_packages
-                # For MAS apps, check if the app name (without ID) is installed
-                if "::" in pkg.name:
-                    app_name = pkg.name.split("::")[0]
-                    pkg.installed = app_name in self.installed_packages.get(pkg_type_plural, [])
-                else:
-                    pkg.installed = pkg.name in self.installed_packages.get(pkg_type_plural, [])
-            else:
-                pkg_type_plural = f"{pkg.package_type}s"
-                pkg.installed = pkg.name in self.installed_packages.get(pkg_type_plural, [])
+    def detect_package_type(self, package_name: str) -> PackageType:
+        """Auto-detect if package is a cask or formula."""
+        try:
+            # First check if it's a cask
+            result = subprocess.run(
+                ["brew", "search", "--cask", package_name],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            # If exact match found in cask search, it's a cask
+            if f"\n{package_name}\n" in result.stdout or result.stdout.strip() == package_name:
+                return PackageType.CASK
+
+            # Check if it's a formula
+            result = subprocess.run(
+                ["brew", "search", package_name],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            # If exact match found in formula search, it's a formula
+            if f"\n{package_name}\n" in result.stdout or result.stdout.strip() == package_name:
+                return PackageType.BREW
+
+            # If no exact match, default to formula
+            warn(f"Could not find exact match for '{package_name}', assuming it's a formula")
+            return PackageType.BREW
+
+        except subprocess.CalledProcessError:
+            # If search fails, default to formula
+            warn(f"Package search failed for '{package_name}', assuming it's a formula")
+            return PackageType.BREW
 
 
 class BrewfileManager:
@@ -482,17 +611,11 @@ class BrewfileManager:
         self.brewfile_path = Path.home() / "Brewfile"
         self.machine_name = socket.gethostname().split(".")[0]  # Short hostname
         self.config = BrewfileConfig.load(self.config_file)
-        self._analyzer = None  # Lazy initialization
+        self._analyzer = PackageAnalyzer()
 
     @property
     def analyzer(self) -> PackageAnalyzer:
         """Get analyzer instance, creating or refreshing as needed."""
-        # Get configured packages for more targeted detection
-        if self._analyzer is None:
-            self._analyzer = PackageAnalyzer(configured_packages=self.packages_by_group)
-        else:
-            self._analyzer.configured_packages = self.packages_by_group  # Update configured packages
-            self._analyzer.refresh()
         return self._analyzer
 
     @property
@@ -506,9 +629,9 @@ class BrewfileManager:
         return self.config.get_machine_groups(self.machine_name)
 
     @property
-    def packages_by_group(self) -> list[PackageInfo]:
-        """Get all packages for current machine's groups."""
-        return self.config.collect_packages_for_groups(self.machine_groups)
+    def machine_packages(self) -> list[PackageInfo]:
+        """Get all packages for current machine."""
+        return self.config.get_machine_packages(self.machine_name)
 
     def _ensure_setup(self, require_brewfile: bool = False) -> tuple[PackageAnalyzer, list[str], list[PackageInfo]]:
         """Common setup: check machine config, get analyzer, groups, and packages.
@@ -526,18 +649,17 @@ class BrewfileManager:
             say("Generating Brewfile first...")
             self._dump_brewfile_from_config()
 
-        return self.analyzer, self.machine_groups, self.packages_by_group
+        return self.analyzer, self.machine_groups, self.machine_packages
 
     def _dump_brewfile_from_config(self) -> None:
         """Generate Brewfile from config only (configured packages for this machine)."""
-        groups = self.config.get_machine_groups(self.machine_name)
-        packages = self.config.collect_packages_for_groups(groups)
+        packages = self.config.get_machine_packages(self.machine_name)
 
         # Group packages by type
-        taps = [p.name for p in packages if p.package_type == "tap"]
-        brews = [p.name for p in packages if p.package_type == "brew"]
-        casks = [p.name for p in packages if p.package_type == "cask"]
-        mas_apps = [p.name for p in packages if p.package_type == "mas"]
+        taps = [p.name for p in packages if p.package_type == PackageType.TAP]
+        brews = [p.name for p in packages if p.package_type == PackageType.BREW]
+        casks = [p.name for p in packages if p.package_type == PackageType.CASK]
+        mas_apps = [p.name for p in packages if p.package_type == PackageType.MAS]
 
         lines = []
 
@@ -597,8 +719,7 @@ class BrewfileManager:
         """Initialize or update machine configuration."""
         say(f"Configuring package groups for machine: {self.machine_name}")
 
-        available_groups = self.config.available_groups
-        current_groups = self.config.get_machine_groups(self.machine_name)
+        available_groups = list(self.config.packages.keys())
 
         if not available_groups:
             say("No package groups defined yet. Define groups in your config first.")
@@ -606,8 +727,8 @@ class BrewfileManager:
 
         print(f"\nAvailable groups: {', '.join(available_groups)}")
 
-        if current_groups:
-            print(f"Current groups: {', '.join(current_groups)}")
+        if self.machine_groups:
+            print(f"Current groups: {', '.join(self.machine_groups)}")
 
         print("\nSelect groups for this machine (space-separated):")
         try:
@@ -654,10 +775,7 @@ class BrewfileManager:
 
         # Group packages by type for display
         packages_by_type = {
-            "taps": [p for p in configured_packages if p.package_type == "tap"],
-            "brews": [p for p in configured_packages if p.package_type == "brew"],
-            "casks": [p for p in configured_packages if p.package_type == "cask"],
-            "mas": [p for p in configured_packages if p.package_type == "mas"],
+            pkg_type.plural: [p for p in configured_packages if p.package_type == pkg_type] for pkg_type in PackageType
         }
 
         # Show each package type
@@ -666,7 +784,7 @@ class BrewfileManager:
             if packages:
                 print(f"\n{package_type.title()}:")
                 for pkg in sorted(packages, key=lambda x: x.name):
-                    if pkg.installed:
+                    if pkg.installed == InstallationStatus.INSTALLED:
                         print(f"  ✓ {pkg.name} {GRAY}({pkg.group}){RESET}")
                     else:
                         print(f"  {RED}✗{RESET} {pkg.name} {GRAY}({pkg.group}) - missing{RESET}")
@@ -743,8 +861,9 @@ class BrewfileManager:
             self.config.ensure_group_exists(self.machine_name)
             group = self.config.packages[self.machine_name]
 
-            for package_type, packages in extra_packages.items():
+            for package_type_str, packages in extra_packages.items():
                 for package in packages:
+                    package_type = PackageType.from_plural(package_type_str)
                     group.add_package(package_type, package)
 
             # Add machine group to machine's groups if not already there
@@ -816,7 +935,7 @@ class BrewfileManager:
         else:
             success("Sync + Cleanup complete!")
 
-    def cmd_add(self, package_name: str, package_type: Optional[str] = None) -> None:
+    def cmd_add(self, package_name: str, package_type: Optional[PackageType] = None) -> None:
         """Add package to configuration, Brewfile, and install it."""
         if not self.is_configured:
             die("Machine not configured. Run 'brewfile init' first.")
@@ -825,22 +944,22 @@ class BrewfileManager:
             # 1. Auto-detect package type if not specified
             if not package_type:
                 say(f"Detecting package type for '{package_name}'...")
-                package_type = self._detect_package_type(package_name)
-                say(f"Detected '{package_name}' as {package_type}")
+                package_type = self.analyzer.detect_package_type(package_name)
+                say(f"Detected '{package_name}' as {package_type.value}")
 
             # 2. Pre-validate: select group before making system changes
             target_group = self._select_group_for_package(package_name)
 
             # 3. Install the package
             say(f"Installing {package_name}...")
-            if package_type == "cask":
+            if package_type == PackageType.CASK:
                 subprocess.run(["brew", "install", "--cask", package_name], check=True)
             else:
                 subprocess.run(["brew", "install", package_name], check=True)
 
             # 4. Add to configuration (with rollback on failure)
             try:
-                self.config.add_package_to_group(target_group, package_type, package_name, self.config_file)
+                self.config.add_package(target_group, package_type, package_name, self.config_file)
                 # Regenerate Brewfile after config change
                 self._dump_brewfile_from_config()
                 success(f"Added {package_name} to group '{target_group}' and installed successfully")
@@ -848,7 +967,7 @@ class BrewfileManager:
                 # Rollback: remove the package we just installed
                 warn("Config update failed, rolling back installation...")
                 try:
-                    if package_type == "cask":
+                    if package_type == PackageType.CASK:
                         subprocess.run(
                             ["brew", "uninstall", "--cask", package_name],
                             check=True,
@@ -870,40 +989,91 @@ class BrewfileManager:
         except Exception as e:
             error(f"Unexpected error adding {package_name}: {e}")
 
-    def cmd_remove(self, package_name: str, package_type: str = "formula") -> None:
-        """Remove package from configuration, Brewfile, and uninstall it."""
+    def _select_group_for_package(self, package_name: str) -> str:
+        """Interactively select which group to add the package to."""
+        available_groups = self.machine_groups
+        default_group = self.machine_name
+
+        print(f"\nAdd '{package_name}' to group [default: {default_group}]:")
+        for i, group in enumerate(available_groups, 1):
+            print(f"  {i}. {group}")
+        print("  n. Create new group")
+
+        try:
+            choice = input("Choice: ").strip().lower()
+
+            if not choice:  # Use default
+                return default_group
+            elif choice == "n":
+                new_group = input("Enter new group name: ").strip()
+                if new_group and new_group not in self.config.packages:
+                    self.config.ensure_group_exists(new_group)
+                    machine_groups = self.config.machines.get(self.machine_name, [])
+                    if new_group not in machine_groups:
+                        machine_groups.append(new_group)
+                        self.config.machines[self.machine_name] = machine_groups
+                    self.config.save(self.config_file)
+                    return new_group
+                warn("Invalid group name, using default")
+                return default_group
+            elif choice.isdigit() and 1 <= int(choice) <= len(available_groups):
+                return available_groups[int(choice) - 1]
+            else:
+                warn("Invalid choice, using default")
+                return default_group
+
+        except (EOFError, KeyboardInterrupt, ValueError):
+            print()
+            return default_group
+
+    def cmd_remove(self, package_name: str) -> None:
+        """Remove package from configuration and system (idempotent - only removes from config if system removal succeeds)."""
         if not self.is_configured:
             die("Machine not configured. Run 'brewfile init' first.")
 
         try:
-            # 1. Remove from JSON configuration
-            removed_groups = self.config.remove_package_from_groups(package_name, package_type, self.config_file)
-
-            # Show success message for removed packages
-            for group_name in removed_groups:
-                say(f"Removed {package_name} from group '{group_name}'")
-            if not removed_groups:
+            # 1. Find package info before removal
+            package_info = self.config.get_package_info(package_name)
+            if not package_info:
                 warn(f"Package {package_name} not found in configuration")
                 return
 
-            # 2. Regenerate Brewfile from config
-            self._dump_brewfile_from_config()
-
-            # 3. Ask user if they want to uninstall
-            print(f"Remove {package_name} from system? (y/N): ", end="")
+            # 2. Ask user to confirm removal from both system and config
+            print(
+                f"Remove {package_name} ({package_info.package_type.value}) from system and configuration? (y/N): ",
+                end="",
+            )
             try:
-                if input().lower().startswith("y"):
-                    say(f"Uninstalling {package_name}...")
-                    if package_type == "cask":
-                        subprocess.run(["brew", "uninstall", "--cask", package_name], check=True)
-                    else:
-                        subprocess.run(["brew", "uninstall", package_name], check=True)
-                    success(f"Removed and uninstalled {package_name}")
-                else:
-                    success(f"Removed {package_name} from configuration (kept installed)")
+                remove_confirmed = input().lower().startswith("y")
             except (EOFError, KeyboardInterrupt):
                 print()
-                success(f"Removed {package_name} from configuration (kept installed)")
+                return
+
+            if not remove_confirmed:
+                say("Removal cancelled.")
+                return
+
+            # 3. Try to remove from system first (idempotent behavior)
+            try:
+                say(f"Uninstalling {package_name}...")
+                if package_info.package_type == PackageType.CASK:
+                    subprocess.run(["brew", "uninstall", "--cask", package_name], check=True)
+                else:
+                    subprocess.run(["brew", "uninstall", package_name], check=True)
+            except subprocess.CalledProcessError as e:
+                error(f"Failed to uninstall {package_name} from system: {e}")
+                error("Package NOT removed from configuration (keeping config in sync with system)")
+                return
+
+            # 4. Only remove from config if system removal succeeded
+            rm_pkg_type = self.config.remove_package(package_name, self.config_file)
+
+            # 5. Regenerate Brewfile from config
+            self._dump_brewfile_from_config()
+
+            success(
+                f"Removed {package_name} ({rm_pkg_type.value if rm_pkg_type else 'unknown'}) from system and config"
+            )
 
         except subprocess.CalledProcessError as e:
             error(f"Failed to remove {package_name}: {e}")
@@ -966,76 +1136,41 @@ class BrewfileManager:
         except subprocess.CalledProcessError:
             warn("Failed to open editor.")
 
-    def _select_group_for_package(self, package_name: str) -> str:
-        """Interactively select which group to add the package to."""
-        available_groups = self.machine_groups
-        default_group = self.machine_name
 
-        print(f"\nAdd '{package_name}' to group [default: {default_group}]:")
-        for i, group in enumerate(available_groups, 1):
-            print(f"  {i}. {group}")
-        print("  n. Create new group")
+def show_help():
+    """Display comprehensive help information."""
+    print(f"{BLUE}BrewfileManager{RESET} - Intelligent Homebrew package management")
+    print("\nUSAGE:")
+    print("  brewfile [COMMAND] [OPTIONS]")
+    print("  brewfile                    # Interactive mode (default)")
 
-        try:
-            choice = input("Choice: ").strip().lower()
+    print("\nCOMMANDS:")
+    print(f"  {GREEN}init{RESET}                    Initialize machine configuration")
+    print(f"  {GREEN}status{RESET}                  Show package status and synchronization state")
+    print(f"  {GREEN}sync-adopt{RESET}              Install missing packages + adopt extras")
+    print(f"  {GREEN}sync-cleanup{RESET}            Install missing packages + remove extras")
+    print(f"  {GREEN}add{RESET} <package> [--cask]   Add package to configuration and install")
+    print(f"  {GREEN}remove{RESET} <package>        Remove package from system and configuration (idempotent)")
+    print(f"  {GREEN}edit{RESET}                    Open configuration file in editor")
+    print(f"  {GREEN}help{RESET}, -h, --help        Show this help message")
 
-            if not choice:  # Use default
-                return default_group
-            elif choice == "n":
-                new_group = input("Enter new group name: ").strip()
-                if new_group and new_group not in self.config.packages:
-                    self.config.ensure_group_exists(new_group)
-                    machine_groups = self.config.machines.get(self.machine_name, [])
-                    if new_group not in machine_groups:
-                        machine_groups.append(new_group)
-                        self.config.machines[self.machine_name] = machine_groups
-                    self.config.save(self.config_file)
-                    return new_group
-                warn("Invalid group name, using default")
-                return default_group
-            elif choice.isdigit() and 1 <= int(choice) <= len(available_groups):
-                return available_groups[int(choice) - 1]
-            else:
-                warn("Invalid choice, using default")
-                return default_group
+    print("\nEXAMPLES:")
+    print("  brewfile status              # Show current package status")
+    print("  brewfile add neovim          # Add and install neovim (auto-detected as formula)")
+    print("  brewfile add --cask chrome   # Add and install Chrome as cask")
+    print("  brewfile remove python       # Remove python from system and config (idempotent)")
+    print("  brewfile sync-adopt          # Sync packages and keep all extras")
+    print("  brewfile sync-cleanup        # Sync packages and remove extras (destructive)")
 
-        except (EOFError, KeyboardInterrupt, ValueError):
-            print()
-            return default_group
+    print("\nCONFIGURATION:")
+    print(f"  Config file: {GRAY}~/.config/brewfile/config.json{RESET}")
+    print(f"  Brewfile:    {GRAY}~/Brewfile{RESET}")
 
-    def _detect_package_type(self, package_name: str) -> str:
-        """Auto-detect if package is a cask or formula."""
-        try:
-            # First check if it's a cask
-            result = subprocess.run(
-                ["brew", "search", "--cask", package_name],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            # If exact match found in cask search, it's a cask
-            if f"\n{package_name}\n" in result.stdout or result.stdout.strip() == package_name:
-                return "cask"
-
-            # Check if it's a formula
-            result = subprocess.run(
-                ["brew", "search", package_name],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            # If exact match found in formula search, it's a formula
-            if f"\n{package_name}\n" in result.stdout or result.stdout.strip() == package_name:
-                return "formula"
-
-            # If no exact match, default to formula
-            warn(f"Could not find exact match for '{package_name}', assuming it's a formula")
-            return "formula"
-
-        except subprocess.CalledProcessError:
-            # If search fails, default to formula
-            warn(f"Package search failed for '{package_name}', assuming it's a formula")
-            return "formula"
+    print("\nMORE INFO:")
+    print("  - Uses JSON configuration with package groups")
+    print("  - Machine-aware installations")
+    print("  - Leverages 'brew bundle' for all operations")
+    print("  - Supports taps, formulas, casks, and Mac App Store apps")
 
 
 def main():
@@ -1045,8 +1180,13 @@ def main():
         manager.cmd_interactive()
         return
 
-    manager = BrewfileManager()
+    # Handle help before creating manager (faster)
     command = sys.argv[1]
+    if command in ["help", "-h", "--help"]:
+        show_help()
+        return
+
+    manager = BrewfileManager()
 
     if command == "init" or command == "select":
         manager.cmd_init()
@@ -1062,20 +1202,19 @@ def main():
             sys.exit(1)
         package_name = sys.argv[2]
         # Auto-detect package type unless --cask is explicitly specified
-        package_type = "cask" if "--cask" in sys.argv else None
+        package_type = PackageType.CASK if "--cask" in sys.argv else None
         manager.cmd_add(package_name, package_type)
     elif command == "remove":
         if len(sys.argv) < 3:
-            error("Usage: brewfile remove <package_name> [--cask]")
+            error("Usage: brewfile remove <package_name>")
             sys.exit(1)
         package_name = sys.argv[2]
-        package_type = "cask" if "--cask" in sys.argv else "formula"
-        manager.cmd_remove(package_name, package_type)
+        manager.cmd_remove(package_name)
     elif command == "edit":
         manager.cmd_edit()
     else:
         error(f"Unknown command: {command}")
-        print("Available commands: init, status, sync-adopt, sync-cleanup, add, remove, edit")
+        print(f"Run '{GREEN}brewfile help{RESET}' to see available commands.")
         sys.exit(1)
 
 
