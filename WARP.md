@@ -13,7 +13,7 @@ This is a **dotfiles repository** that uses **GNU Stow** for symlink management.
 - **`brewfile.py`** - Source for the brewfile utility (symlinked to `~/.local/bin/brewfile`)
 - **`aptfile.py`** - Source for the aptfile utility (symlinked to `~/.local/bin/aptfile`)
 - **`bootstrap.sh`** - Legacy Bash bootstrap script
-- **`~/.config/brewfile/config.json`** - Modern JSON-based package configuration (macOS)
+- **`~/.config/brewfile.json`** - Modern JSON-based package configuration (macOS)
 - **`~/Brewfile`** - Generated Brewfile for brew bundle (macOS)
 - **`Aptfile`** + **`Dnffile`** - Linux package management for Ubuntu and Rocky Linux
 - **`home/.local/bin/brewfile`** - Modern Python-based Brewfile manager (macOS)

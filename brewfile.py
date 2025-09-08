@@ -12,10 +12,12 @@ import os
 import socket
 import subprocess
 import sys
+import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 # ANSI colors (respect NO_COLOR and non-TTY)
 BLUE = "\033[1;34m"
@@ -191,7 +193,7 @@ class PackageInfo:
     """Information about a package including its metadata and installation status."""
 
     name: str
-    group: str
+    group: Union[str, None]  # None for system packages
     package_type: PackageType
     installed: InstallationStatus = field(default_factory=lambda: InstallationStatus.UNKNOWN)
 
@@ -433,23 +435,21 @@ class BrewfileConfig:
             die(f"Could not write Brewfile: {e}")
 
 
-class PackageAnalyzer:
-    """Handles all package detection, analysis, and state management."""
+class PackageCache:
+    """Handles caching of system package state."""
 
     def __init__(self):
-        """Initialize analyzer with lazy loading."""
-        self.brewfile_path = Path.home() / "Brewfile"
-        self._installed_packages = None  # Lazy-loaded
+        """Initialize cache with lazy loading."""
+        self._installed_packages = None
 
-    @property
-    def installed_packages(self) -> dict[str, list[str]]:
-        """Get installed packages, loading them if needed."""
+    def get_installed_packages(self) -> list[PackageInfo]:
+        """Get installed packages as PackageInfo objects, loading them if needed."""
         if self._installed_packages is None:
-            return self.refresh()
-        return self._installed_packages
+            self.refresh()
+        return self._installed_packages or []
 
-    def refresh(self) -> dict[str, list[str]]:
-        """Get currently installed packages by first syncing Brewfile, then using brew bundle list."""
+    def refresh(self) -> list[PackageInfo]:
+        """Refresh package cache using temporary brewfile."""
         # Clean up orphaned dependencies using brew autoremove
         try:
             subprocess.run(["brew", "autoremove"], check=False, capture_output=True)
@@ -457,172 +457,95 @@ class PackageAnalyzer:
             # Don't fail if cleanup fails
             pass
 
-        try:
-            # First, ensure Brewfile is in sync with system by dumping (overwrites existing)
-            self._dump_brewfile_from_system()
+        with self._temp_system_brewfile() as temp_path:
+            package_dict = Brew.Bundle.list_packages(temp_path)
 
-            # Now use brew bundle list to get packages from the synced Brewfile
-            self._installed_packages = self._get_brewfile_packages()
-        except subprocess.CalledProcessError as e:
-            die(f"Could not get system packages: {e}")
-            self._installed_packages = {pkg_type.plural: [] for pkg_type in PackageType}
-        return self._installed_packages
+            # Convert dict to PackageInfo list
+            packages = []
+            for pkg_type in PackageType:
+                for pkg_name in package_dict[pkg_type.plural]:
+                    packages.append(
+                        PackageInfo(
+                            name=pkg_name, group=None, package_type=pkg_type, installed=InstallationStatus.INSTALLED
+                        )
+                    )
+
+            self._installed_packages = packages
+            return packages
+
+    @contextmanager
+    def _temp_system_brewfile(self):
+        """Create temporary brewfile with current system state."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".brewfile", delete=True) as tmp_file:
+            temp_path = Path(tmp_file.name)
+            Brew.Bundle.dump_system(temp_path)
+            yield temp_path
+            # Automatic cleanup when context exits
 
     def update_package_status(self, packages: list[PackageInfo]) -> None:
         """Update installation status for a list of packages."""
+        installed_packages = self.get_installed_packages()
+        installed_keys = {(pkg.name, pkg.package_type) for pkg in installed_packages}
+
         for pkg in packages:
-            # Use the plural form for installed_packages lookup
-            pkg_type_plural = pkg.package_type.plural
-
-            if pkg.package_type == PackageType.MAS:
-                # For MAS apps, check if the app name (without ID) is installed
-                if "::" in pkg.name:
-                    app_name = pkg.name.split("::")[0]
-                    is_installed = app_name in self.installed_packages.get(pkg_type_plural, [])
-                else:
-                    is_installed = pkg.name in self.installed_packages.get(pkg_type_plural, [])
+            # For MAS apps, check if the app name (without ID) is installed
+            if pkg.package_type == PackageType.MAS and "::" in pkg.name:
+                app_name = pkg.name.split("::")[0]
+                is_installed = any(
+                    (app_name, PackageType.MAS) == (installed_pkg.name, installed_pkg.package_type)
+                    for installed_pkg in installed_packages
+                )
             else:
-                is_installed = pkg.name in self.installed_packages.get(pkg_type_plural, [])
+                is_installed = (pkg.name, pkg.package_type) in installed_keys
 
-            # Set installation status using enum
             pkg.installed = InstallationStatus.INSTALLED if is_installed else InstallationStatus.NOT_INSTALLED
 
-    def _dump_brewfile_from_system(self) -> None:
-        """Generate Brewfile from current system state (all installed packages)."""
-        try:
+
+class Brew:
+    """Static utilities for brew operations."""
+
+    class Bundle:
+        @staticmethod
+        def install(brewfile_path: Path) -> None:
+            """Install packages using brew bundle."""
+            subprocess.run(["brew", "bundle", "install", "--file", str(brewfile_path)], check=True)
+
+        @staticmethod
+        def cleanup(brewfile_path: Path) -> None:
+            """Remove extra packages using brew bundle cleanup."""
+            subprocess.run(["brew", "bundle", "cleanup", "--force", "--file", str(brewfile_path)], check=True)
+
+        @staticmethod
+        def dump_system(brewfile_path: Path) -> None:
+            """Dump current system state to specified brewfile."""
             subprocess.run(
-                ["brew", "bundle", "dump", "--force", "--no-vscode", "--file", str(self.brewfile_path)],
+                ["brew", "bundle", "dump", "--force", "--no-vscode", "--file", str(brewfile_path)],
                 check=True,
                 capture_output=True,
             )
-        except subprocess.CalledProcessError as e:
-            die(f"Could not dump system Brewfile: {e}")
 
-    def _get_brewfile_packages(self) -> dict[str, list[str]]:
-        """Get packages from Brewfile using brew bundle list + fallback for commented MAS apps."""
-        try:
+        @staticmethod
+        def list_packages(brewfile_path: Path) -> dict[str, list[str]]:
+            """Parse brewfile to get package lists."""
             packages = {pkg_type.plural: [] for pkg_type in PackageType}
 
-            # Get taps
-            result = subprocess.run(
-                ["brew", "bundle", "list", "--tap"],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            packages[PackageType.TAP.plural] = [
-                line.strip() for line in result.stdout.strip().split("\n") if line.strip()
-            ]
-
-            # Get formulas
-            result = subprocess.run(
-                ["brew", "bundle", "list", "--formula"],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            packages[PackageType.BREW.plural] = [
-                line.strip() for line in result.stdout.strip().split("\n") if line.strip()
-            ]
-
-            # Get casks
-            result = subprocess.run(
-                ["brew", "bundle", "list", "--cask"],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            packages[PackageType.CASK.plural] = [
-                line.strip() for line in result.stdout.strip().split("\n") if line.strip()
-            ]
-
-            # Get mas apps
-            result = subprocess.run(
-                ["brew", "bundle", "list", "--mas"],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            packages[PackageType.MAS.plural] = [
-                line.strip() for line in result.stdout.strip().split("\n") if line.strip()
-            ]
+            # Use brew bundle list commands with specific file
+            for cmd, key in [
+                (["brew", "bundle", "list", "--tap", "--file", str(brewfile_path)], "taps"),
+                (["brew", "bundle", "list", "--formula", "--file", str(brewfile_path)], "brews"),
+                (["brew", "bundle", "list", "--cask", "--file", str(brewfile_path)], "casks"),
+                (["brew", "bundle", "list", "--mas", "--file", str(brewfile_path)], "mas"),
+            ]:
+                try:
+                    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                    packages[key] = [line.strip() for line in result.stdout.strip().split("\n") if line.strip()]
+                except subprocess.CalledProcessError:
+                    packages[key] = []  # Fallback to empty if command fails
 
             return packages
-        except subprocess.CalledProcessError:
-            # If brew bundle list fails, fall back to empty
-            return {pkg_type.plural: [] for pkg_type in PackageType}
 
-    def get_missing_packages(self, configured_packages: list[PackageInfo]) -> dict[str, list[str]]:
-        """Get packages that are configured but not installed."""
-        missing = {pkg_type.plural: [] for pkg_type in PackageType}
-
-        # Group configured packages by type
-        packages_by_type = {
-            pkg_type.plural: [p for p in configured_packages if p.package_type == pkg_type] for pkg_type in PackageType
-        }
-
-        # Find missing packages for each type
-        for pkg_type, packages in packages_by_type.items():
-            if pkg_type == PackageType.MAS.plural:
-                # For MAS apps, compare app names (without IDs) against installed apps
-                configured_names = set()
-                for p in packages:
-                    if "::" in p.name:
-                        configured_names.add(p.name.split("::")[0])
-                    else:
-                        configured_names.add(p.name)
-                installed = set(self.installed_packages.get(pkg_type, []))
-                missing_names = configured_names - installed
-                # Convert back to full appName::id format for missing items
-                missing_full_names = []
-                for p in packages:
-                    if "::" in p.name:
-                        app_name = p.name.split("::")[0]
-                        if app_name in missing_names:
-                            missing_full_names.append(p.name)
-                    else:
-                        if p.name in missing_names:
-                            missing_full_names.append(p.name)
-                missing[pkg_type] = missing_full_names
-            else:
-                configured_names = {p.name for p in packages}
-                installed = set(self.installed_packages.get(pkg_type, []))
-                missing_names = configured_names - installed
-                missing[pkg_type] = list(missing_names)
-
-        return missing
-
-    def get_extra_packages(self, configured_packages: list[PackageInfo]) -> dict[str, list[str]]:
-        """Get packages that are installed but not configured."""
-        extra = {pkg_type.plural: [] for pkg_type in PackageType}
-
-        # Group configured packages by type
-        packages_by_type = {
-            pkg_type.plural: [p for p in configured_packages if p.package_type == pkg_type] for pkg_type in PackageType
-        }
-
-        # Find extra packages for each type
-        for pkg_type, packages in packages_by_type.items():
-            if pkg_type == PackageType.MAS.plural:
-                # For MAS apps, compare app names (without IDs) against installed apps
-                configured_names = set()
-                for p in packages:
-                    if "::" in p.name:
-                        configured_names.add(p.name.split("::")[0])
-                    else:
-                        configured_names.add(p.name)
-                installed = set(self.installed_packages.get(pkg_type, []))
-                extra_names = installed - configured_names
-                extra[pkg_type] = list(extra_names)
-            else:
-                configured_names = {p.name for p in packages}
-                installed = set(self.installed_packages.get(pkg_type, []))
-                extra_names = installed - configured_names
-                extra[pkg_type] = list(extra_names)
-
-        return extra
-
-    def detect_package_type(self, package_name: str) -> PackageType:
+    @staticmethod
+    def detect_package_type(package_name: str) -> PackageType:
         """Auto-detect if package is a cask or formula."""
         try:
             # First check if it's a cask
@@ -657,19 +580,79 @@ class PackageAnalyzer:
             return PackageType.BREW
 
 
+def compare_packages(
+    configured: list[PackageInfo], installed: list[PackageInfo]
+) -> tuple[list[PackageInfo], list[PackageInfo]]:
+    """Compare configured and installed packages, returning (missing, extra) packages.
+
+    Args:
+        configured: Packages that should be installed according to config
+        installed: Packages currently installed on system
+
+    Returns:
+        tuple of (missing_packages, extra_packages)
+        - missing: configured packages not installed
+        - extra: installed packages not configured
+    """
+    # Build lookup sets for efficient comparison
+    installed_keys = {(pkg.name, pkg.package_type) for pkg in installed}
+    configured_keys = {(pkg.name, pkg.package_type) for pkg in configured}
+
+    # Handle MAS app name matching (configured with ID, installed without ID)
+    configured_mas_names = set()
+    installed_mas_names = set()
+
+    for pkg in configured:
+        if pkg.package_type == PackageType.MAS and "::" in pkg.name:
+            app_name = pkg.name.split("::")[0]
+            configured_mas_names.add((app_name, PackageType.MAS))
+
+    for pkg in installed:
+        if pkg.package_type == PackageType.MAS:
+            installed_mas_names.add((pkg.name, pkg.package_type))
+
+    missing = []
+    extra = []
+
+    # Find missing packages (configured but not installed)
+    for pkg in configured:
+        if pkg.package_type == PackageType.MAS and "::" in pkg.name:
+            # For MAS apps, check if the app name (without ID) is installed
+            app_name = pkg.name.split("::")[0]
+            if (app_name, PackageType.MAS) not in installed_mas_names:
+                missing.append(pkg)
+        elif (pkg.name, pkg.package_type) not in installed_keys:
+            missing.append(pkg)
+
+    # Find extra packages (installed but not configured)
+    for pkg in installed:
+        if pkg.package_type == PackageType.MAS:
+            # For MAS apps, check both exact match and app name match
+            if (pkg.name, pkg.package_type) not in configured_keys and (
+                pkg.name,
+                pkg.package_type,
+            ) not in configured_mas_names:
+                extra.append(pkg)
+        elif (pkg.name, pkg.package_type) not in configured_keys:
+            extra.append(pkg)
+
+    return missing, extra
+
+
 class BrewfileManager:
     """Main CLI orchestrator - delegates to service classes."""
 
     def __init__(self):
-        self.config_file = Path.home() / ".config" / "brewfile" / "config.json"
+        self.config_file = Path.home() / ".config" / "brewfile.json"
+        self.brewfile_path = Path.home() / "Brewfile"
         self.machine_name = socket.gethostname().split(".")[0]  # Short hostname
         self.config = BrewfileConfig.load(self.config_file)
-        self._analyzer = PackageAnalyzer()
+        self._package_cache = PackageCache()
 
     @property
-    def analyzer(self) -> PackageAnalyzer:
-        """Get analyzer instance, creating or refreshing as needed."""
-        return self._analyzer
+    def package_cache(self) -> PackageCache:
+        """Get package cache instance."""
+        return self._package_cache
 
     @property
     def is_configured(self) -> bool:
@@ -682,42 +665,29 @@ class BrewfileManager:
         return self.config.get_machine_groups(self.machine_name)
 
     @property
-    def machine_packages(self) -> list[PackageInfo]:
-        """Get all packages for current machine."""
-        return self.config.get_machine_packages(self.machine_name)
-
-    def _ensure_setup(self, require_brewfile: bool = False) -> tuple[PackageAnalyzer, list[str], list[PackageInfo]]:
-        """Common setup: check machine config, get analyzer, groups, and packages.
-
-        Args:
-            require_brewfile: Whether to generate Brewfile if missing
+    def machine_packages(self) -> tuple[list[PackageInfo], list[PackageInfo], list[PackageInfo]]:
+        """Get analyzed package state for current machine.
 
         Returns:
-            tuple of (analyzer, groups, configured_packages)
+            tuple of (configured_packages, missing_packages, extra_packages)
+            - configured: packages that should be installed (with updated status)
+            - missing: configured packages not installed
+            - extra: installed packages not configured
         """
+        # Ensure machine is configured
         if not self.is_configured:
             die("Machine not configured. Run 'brewfile init' first.")
 
-        if require_brewfile and not self.analyzer.brewfile_path.exists():
-            say("Generating Brewfile first...")
-            self.config.dump_brewfile(self.machine_name, self.analyzer.brewfile_path)
+        # Get configured packages for this machine
+        configured_packages = self.config.get_machine_packages(self.machine_name)
 
-        return self.analyzer, self.machine_groups, self.machine_packages
+        # Get installed packages and update status
+        installed_packages = self.package_cache.get_installed_packages()
+        self.package_cache.update_package_status(configured_packages)
 
-    def _run_brew_bundle(self, command: str, capture_output: bool = True) -> subprocess.CompletedProcess:
-        """Run brew bundle command."""
-        cmd = ["brew", "bundle"] + command.split()
-
-        try:
-            if capture_output:
-                return subprocess.run(cmd, capture_output=True, text=True, check=True)
-            else:
-                return subprocess.run(cmd, check=True)
-        except subprocess.CalledProcessError as e:
-            if capture_output:
-                error(f"brew bundle failed: {e.stderr}")
-            die(f"Command failed: {' '.join(cmd)}")
-        return subprocess.CompletedProcess(cmd, 1)  # Should not reach here
+        # Compare and return results
+        missing, extra = compare_packages(configured_packages, installed_packages)
+        return configured_packages, missing, extra
 
     def cmd_init(self) -> None:
         """Initialize or update machine configuration."""
@@ -758,20 +728,15 @@ class BrewfileManager:
         success(f"Machine {self.machine_name} configured with groups: {', '.join(selected_groups)}")
 
         # Generate initial Brewfile
-        self.config.dump_brewfile(self.machine_name, self.analyzer.brewfile_path)
+        self.config.dump_brewfile(self.machine_name, self.brewfile_path)
         success(f"Generated ~/Brewfile with packages from: {', '.join(selected_groups)}")
 
     def cmd_status(self) -> tuple[int, int]:
         """Show package status by comparing config, Brewfile, and system state."""
-        # Perform all the setup and analysis internally
-        analyzer, groups, configured_packages = self._ensure_setup()
 
-        # Get missing and extra packages using analyzer
-        missing_packages = analyzer.get_missing_packages(configured_packages)
-        extra_packages = analyzer.get_extra_packages(configured_packages)
-
-        # Update installation status for configured packages
-        analyzer.update_package_status(configured_packages)
+        # Get analyzed package state
+        configured_packages, missing_packages_list, extra_packages_list = self.machine_packages
+        groups = self.machine_groups
 
         # Display the status
         print(f"\n{BLUE}Package Status for {self.machine_name}:{RESET}")
@@ -780,6 +745,11 @@ class BrewfileManager:
         # Group packages by type for display
         packages_by_type = {
             pkg_type.plural: [p for p in configured_packages if p.package_type == pkg_type] for pkg_type in PackageType
+        }
+
+        # Group extra packages by type for display
+        extra_by_type = {
+            pkg_type.plural: [p for p in extra_packages_list if p.package_type == pkg_type] for pkg_type in PackageType
         }
 
         # Show each package type
@@ -793,19 +763,19 @@ class BrewfileManager:
                     else:
                         print(f"  {RED}✗{RESET} {pkg.name} {GRAY}({pkg.group}) - missing{RESET}")
 
-            # Show extra packages using DRY data
-            extra = extra_packages.get(package_type, [])
+            # Show extra packages
+            extra = extra_by_type.get(package_type, [])
             if extra:
                 if packages:  # Only add extra header if we had configured packages
                     print(f"\n{package_type.title()} (extra):")
                 else:  # No configured packages, so this is the main section
                     print(f"\n{package_type.title()}:")
-                for package in sorted(extra):
-                    print(f"  {BLUE}+{RESET} {package} {GRAY}- not in config{RESET}")
+                for package in sorted(extra, key=lambda x: x.name):
+                    print(f"  {BLUE}+{RESET} {package.name} {GRAY}- not in config{RESET}")
 
-        # Summary using DRY data
-        total_missing = sum(len(pkgs) for pkgs in missing_packages.values())
-        total_extra = sum(len(pkgs) for pkgs in extra_packages.values())
+        # Summary counts
+        total_missing = len(missing_packages_list)
+        total_extra = len(extra_packages_list)
 
         print("\nSummary:")
         if total_missing > 0:
@@ -818,12 +788,18 @@ class BrewfileManager:
 
         return total_missing, total_extra
 
+    def _ensure_brewfile(self) -> None:
+        """Ensure Brewfile exists, generate if missing."""
+        if not self.brewfile_path.exists():
+            say("Generating Brewfile first...")
+            self.config.dump_brewfile(self.machine_name, self.brewfile_path)
+
     def cmd_sync_adopt(self) -> None:
         """Install missing packages and adopt extras to machine group."""
-        analyzer, groups, configured_packages = self._ensure_setup(require_brewfile=True)
+        self._ensure_brewfile()
 
-        missing_packages = analyzer.get_missing_packages(configured_packages)
-        extra_packages = analyzer.get_extra_packages(configured_packages)
+        # Get analyzed package state
+        _, missing_packages, extra_packages = self.machine_packages
 
         if not missing_packages and not extra_packages:
             success("All packages are already synchronized!")
@@ -831,16 +807,22 @@ class BrewfileManager:
 
         print(f"\n{YELLOW}Sync + Adopt Summary:{RESET}")
         if missing_packages:
-            print(f"\n{GREEN}INSTALL ({sum(len(pkgs) for pkgs in missing_packages.values())}):{RESET}")
-            for pkg_type, packages in missing_packages.items():
+            print(f"\n{GREEN}INSTALL ({len(missing_packages)}):{RESET}")
+            missing_by_type = {
+                pkg_type.plural: [p for p in missing_packages if p.package_type == pkg_type] for pkg_type in PackageType
+            }
+            for pkg_type, packages in missing_by_type.items():
                 if packages:
-                    print(f"  {pkg_type.title()}: {', '.join(packages)}")
+                    print(f"  {pkg_type.title()}: {', '.join(p.name for p in packages)}")
 
         if extra_packages:
-            print(f"\n{BLUE}ADOPT ({sum(len(pkgs) for pkgs in extra_packages.values())}):{RESET}")
-            for pkg_type, packages in extra_packages.items():
+            print(f"\n{BLUE}ADOPT ({len(extra_packages)}):{RESET}")
+            extra_by_type = {
+                pkg_type.plural: [p for p in extra_packages if p.package_type == pkg_type] for pkg_type in PackageType
+            }
+            for pkg_type, packages in extra_by_type.items():
                 if packages:
-                    print(f"  {pkg_type.title()}: {', '.join(packages)}")
+                    print(f"  {pkg_type.title()}: {', '.join(p.name for p in packages)}")
 
         print(f"\nThis will install missing packages and keep all extras in your {self.machine_name} config.")
         print("No packages will be removed from your system.")
@@ -857,7 +839,7 @@ class BrewfileManager:
         # Install missing packages
         if missing_packages:
             say("Installing missing packages...")
-            self._run_brew_bundle("install", capture_output=False)
+            Brew.Bundle.install(self.brewfile_path)
 
         # Adopt extra packages to machine group
         if extra_packages:
@@ -865,10 +847,8 @@ class BrewfileManager:
             self.config.ensure_group_exists(self.machine_name)
             group = self.config.packages[self.machine_name]
 
-            for package_type_str, packages in extra_packages.items():
-                for package in packages:
-                    package_type = PackageType.from_plural(package_type_str)
-                    group.add_package(package_type, package)
+            for package in extra_packages:
+                group.add_package(package.package_type, package.name)
 
             # Add machine group to machine's groups if not already there
             machine_groups = self.config.machines.get(self.machine_name, [])
@@ -879,36 +859,46 @@ class BrewfileManager:
             self.config.save(self.config_file)
 
             # Regenerate Brewfile
-            self.config.dump_brewfile(self.machine_name, self.analyzer.brewfile_path)
+            self.config.dump_brewfile(self.machine_name, self.brewfile_path)
 
         success("Sync + Adopt complete!")
 
     def cmd_sync_cleanup(self) -> None:
         """Install missing packages and remove extras from system."""
-        analyzer, groups, configured_packages = self._ensure_setup(require_brewfile=True)
+        self._ensure_brewfile()
 
-        missing_packages = analyzer.get_missing_packages(configured_packages)
-        extra_packages = analyzer.get_extra_packages(configured_packages)
+        # Get analyzed package state
+        _, missing_packages_list, extra_packages_list = self.machine_packages
 
-        if not missing_packages and not extra_packages:
+        if not missing_packages_list and not extra_packages_list:
             success("All packages are already synchronized!")
             return
 
         print(f"\n{YELLOW}Sync + Cleanup Summary:{RESET}")
-        if missing_packages:
-            print(f"\n{GREEN}INSTALL ({sum(len(pkgs) for pkgs in missing_packages.values())}):{RESET}")
-            for pkg_type, packages in missing_packages.items():
+        if missing_packages_list:
+            print(f"\n{GREEN}INSTALL ({len(missing_packages_list)}):{RESET}")
+            # Group by type for display
+            missing_by_type = {
+                pkg_type.plural: [p.name for p in missing_packages_list if p.package_type == pkg_type]
+                for pkg_type in PackageType
+            }
+            for pkg_type, packages in missing_by_type.items():
                 if packages:
                     print(f"  {pkg_type.title()}: {', '.join(packages)}")
 
-        if extra_packages:
-            print(f"\n{RED}⚠ REMOVE ({sum(len(pkgs) for pkgs in extra_packages.values())}):{RESET}")
-            for pkg_type, packages in extra_packages.items():
+        if extra_packages_list:
+            print(f"\n{RED}⚠ REMOVE ({len(extra_packages_list)}):{RESET}")
+            # Group by type for display
+            extra_by_type = {
+                pkg_type.plural: [p.name for p in extra_packages_list if p.package_type == pkg_type]
+                for pkg_type in PackageType
+            }
+            for pkg_type, packages in extra_by_type.items():
                 if packages:
                     print(f"  {pkg_type.title()}: {', '.join(packages)}")
 
         print("\nThis will install missing packages and remove extras from your system.")
-        if extra_packages:
+        if extra_packages_list:
             print(f"{RED}WARNING: This will uninstall packages from your system!{RESET}")
 
         try:
@@ -921,18 +911,18 @@ class BrewfileManager:
             return
 
         # Generate Brewfile from CONFIG ONLY for both install and cleanup
-        self.config.dump_brewfile(self.machine_name, self.analyzer.brewfile_path)
+        self.config.dump_brewfile(self.machine_name, self.brewfile_path)
 
         # Install missing packages first
-        if missing_packages:
+        if missing_packages_list:
             say("Installing missing packages...")
-            self._run_brew_bundle("install", capture_output=False)
+            Brew.Bundle.install(self.brewfile_path)
 
         # Remove extra packages
-        if extra_packages:
+        if extra_packages_list:
             say("Removing extra packages...")
             try:
-                self._run_brew_bundle("cleanup --force", capture_output=False)
+                Brew.Bundle.cleanup(self.brewfile_path)
                 success("Sync + Cleanup complete!")
             except subprocess.CalledProcessError:
                 warn("Cleanup portion failed, but install may have succeeded.")
@@ -948,7 +938,7 @@ class BrewfileManager:
             # 1. Auto-detect package type if not specified
             if not package_type:
                 say(f"Detecting package type for '{package_name}'...")
-                package_type = self.analyzer.detect_package_type(package_name)
+                package_type = Brew.detect_package_type(package_name)
                 say(f"Detected '{package_name}' as {package_type.value}")
 
             # 2. Pre-validate: select group before making system changes
@@ -965,7 +955,7 @@ class BrewfileManager:
             try:
                 self.config.add_package(target_group, package_type, package_name, self.config_file)
                 # Regenerate Brewfile after config change
-                self.config.dump_brewfile(self.machine_name, self.analyzer.brewfile_path)
+                self.config.dump_brewfile(self.machine_name, self.brewfile_path)
                 success(f"Added {package_name} to group '{target_group}' and installed successfully")
             except Exception as config_error:
                 # Rollback: remove the package we just installed
@@ -1073,7 +1063,7 @@ class BrewfileManager:
             rm_pkg_type = self.config.remove_package(package_name, self.config_file)
 
             # 5. Regenerate Brewfile from config
-            self.config.dump_brewfile(self.machine_name, self.analyzer.brewfile_path)
+            self.config.dump_brewfile(self.machine_name, self.brewfile_path)
 
             success(
                 f"Removed {package_name} ({rm_pkg_type.value if rm_pkg_type else 'unknown'}) from system and config"
@@ -1167,7 +1157,7 @@ def show_help():
     print("  brewfile sync-cleanup        # Sync packages and remove extras (destructive)")
 
     print("\nCONFIGURATION:")
-    print(f"  Config file: {GRAY}~/.config/brewfile/config.json{RESET}")
+    print(f"  Config file: {GRAY}~/.config/brewfile.json{RESET}")
     print(f"  Brewfile:    {GRAY}~/Brewfile{RESET}")
 
     print("\nMORE INFO:")

@@ -82,17 +82,13 @@ class BootstrapOrchestrator:
 
         try:
             # First try 'mas account' (works on older macOS versions)
-            result = subprocess.run(
-                ["mas", "account"], capture_output=True, text=True, timeout=5
-            )
+            result = subprocess.run(["mas", "account"], capture_output=True, text=True, timeout=5)
             if result.returncode == 0 and result.stdout.strip():
                 return True, result.stdout.strip()  # Returns email
 
             # If 'mas account' fails, try 'mas list' as a sign-in check
             # If user is signed in, this should work; if not, it may fail
-            result = subprocess.run(
-                ["mas", "list"], capture_output=True, text=True, timeout=5
-            )
+            result = subprocess.run(["mas", "list"], capture_output=True, text=True, timeout=5)
             if result.returncode == 0:
                 # mas list works, user is probably signed in, but we don't have email
                 return True, "signed in (email unavailable)"
@@ -116,23 +112,19 @@ class BootstrapOrchestrator:
             ("mas", "Mac App Store CLI (for App Store apps)"),
         ]
 
-        installed_any = False
         for tool, description in foundational_tools:
             if not shutil.which(tool):
                 say(f"Installing {description}...")
                 try:
-                    result = subprocess.run(
+                    _ = subprocess.run(
                         ["brew", "install", tool],
                         capture_output=True,
                         text=True,
                         check=True,
                     )
                     success(f"{tool} installed successfully")
-                    installed_any = True
                 except subprocess.CalledProcessError as e:
-                    warn(
-                        f"Failed to install {tool}: {e.stderr if e.stderr else str(e)}"
-                    )
+                    warn(f"Failed to install {tool}: {e.stderr if e.stderr else str(e)}")
                     if tool == "stow":
                         warn("GNU Stow is recommended for dotfiles management")
             else:
@@ -305,7 +297,7 @@ class BootstrapOrchestrator:
         if self._is_brewfile_functional():
             print(f"\n{YELLOW}Package Status (via brewfile):{RESET}")
             try:
-                result = subprocess.run(
+                _ = subprocess.run(
                     [sys.executable, str(self.repo_dir / "brewfile.py"), "status"],
                     cwd=self.repo_dir,
                     timeout=30,
@@ -325,7 +317,7 @@ class BootstrapOrchestrator:
         if self._is_dotfiles_functional():
             print(f"\n{YELLOW}Dotfiles Status (via dotfiles utility):{RESET}")
             try:
-                result = subprocess.run(
+                _ = subprocess.run(
                     [sys.executable, str(self.repo_dir / "dotfiles.py")],
                     cwd=self.repo_dir,
                     timeout=10,
@@ -364,9 +356,7 @@ class BootstrapOrchestrator:
 
         # Offer foundational tools installation if needed
         if needs_install:
-            print(
-                f"  ({option_num}) Install foundational tools ({', '.join(needs_install)})"
-            )
+            print(f"  ({option_num}) Install foundational tools ({', '.join(needs_install)})")
             menu_options.append(("install_tools", self._install_and_setup_tools))
             option_num += 1
 
