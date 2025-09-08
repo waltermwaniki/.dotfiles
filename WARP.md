@@ -34,6 +34,7 @@ This sequence ensures all dependencies are met before attempting to apply dotfil
 ## Common Commands
 
 ### Initial Setup
+
 ```bash
 # Clone and bootstrap the entire development environment
 git clone <repo-url> "$HOME/.dotfiles"
@@ -42,6 +43,7 @@ cd "$HOME/.dotfiles"
 ```
 
 ### Complete System Setup
+
 ```bash
 # Full setup (packages + dotfiles)
 ./bootstrap.py setup                # Complete setup
@@ -52,6 +54,7 @@ cd "$HOME/.dotfiles"
 ```
 
 ### Individual Components
+
 ```bash
 # Package management only
 ./bootstrap.py packages             # Install all packages
@@ -73,6 +76,7 @@ cd "$HOME/.dotfiles"
 ### Package Management
 
 #### macOS (Homebrew)
+
 Use the deployed `brewfile` utility for package management:
 
 ```bash
@@ -87,6 +91,7 @@ brewfile generate                   # Generate ~/Brewfile from configuration
 ```
 
 #### Linux (apt/dnf/yum)
+
 Use the deployed `aptfile` utility for package management:
 
 ```bash
@@ -109,6 +114,7 @@ dotfiles conflicts                  # Check for stow conflicts
 ```
 
 ### Shell Environment
+
 ```bash
 # Reload shell configuration
 source ~/.zshrc
@@ -119,12 +125,14 @@ src~
 ## Key Development Features
 
 ### Shell Enhancements
+
 - **Starship prompt** with custom configuration
 - **fzf** integration with `fd` for fast file/directory search
 - **zoxide** for intelligent directory jumping (`cd` command replacement)
 - **Python virtual environment** helper (`pyactivate` or `venv` alias)
 
 ### Useful Aliases & Functions
+
 - `fcd` - Interactive directory navigation with fzf + preview
 - `fzfp` - fzf with bat preview
 - Standard navigation: `..`, `...`, `....`, etc.
@@ -137,6 +145,7 @@ src~
 The repository includes a sophisticated Brewfile management system:
 
 ### Key Features
+
 - **Interactive package management**: Add/remove packages with confirmation prompts
 - **Installation status tracking**: Shows which declared packages are actually installed
 - **Smart package placement**: Automatically detects whether packages are formulae or casks
@@ -148,6 +157,7 @@ The repository includes a sophisticated Brewfile management system:
 - **Include system**: Mix and match different Brewfile configurations
 
 ### Recommended Workflows
+
 ```bash
 # Daily workflow
 brewfile status                     # Check status of all packages and groups
@@ -165,35 +175,43 @@ brewfile generate                   # Regenerate ~/Brewfile from JSON config
 ## File Organization Logic
 
 ### Stow Structure
+
 The `home/` directory mirrors your actual home directory:
+
 - `home/.zshrc` → `~/.zshrc`
 - `home/.config/nvim/init.lua` → `~/.config/nvim/init.lua`
 - `home/.local/bin/brewfile.sh` → `~/.local/bin/brewfile.sh`
 
 ### Configuration Loading
+
 Shell configurations are modular:
+
 1. `.zshenv` - Environment setup
-2. `.zprofile` - Login shell setup  
+2. `.zprofile` - Login shell setup
 3. `.zshrc` - Interactive shell (sources `.aliases` and `.exports`)
 
 ## Best Practices for This Repository
 
 ### When Adding New Dotfiles
+
 1. Place files in `home/` maintaining the directory structure
 2. Test with `stow -nv -t "$HOME" home` (preview mode) first
 3. Apply with `stow -v -t "$HOME" home`
 
 ### When Adding New Packages
+
 1. Use brewfile: `brewfile add <package>` (automatically installs and adds to config)
 2. Or install normally: `brew install <package>`, then `brewfile adopt` to add to config
 3. Run `brewfile generate` to update ~/Brewfile from the JSON configuration
 
 ### When Modifying Brewfile Utility
+
 1. Edit the source file: `brewfile.py` in the repository root
 2. Test changes by running `python3 brewfile.py <command>`
 3. **No deployment needed**: `home/.local/bin/brewfile` is automatically symlinked to the source via stow
 
 ### System Maintenance
+
 - Use `brewfile cleanup` regularly to identify unused packages
 - The bootstrap script handles cross-platform Stow installation automatically
 - Brewfile management supports both incremental updates and complete rebuilds
@@ -201,6 +219,7 @@ Shell configurations are modular:
 ## Shell Environment Context
 
 This dotfiles setup assumes:
+
 - **zsh** as the primary shell
 - **Homebrew** package management on macOS, **apt/dnf** on Linux
 - **GNU Stow** for symlink management

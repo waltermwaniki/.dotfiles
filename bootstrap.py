@@ -47,7 +47,7 @@ class BootstrapOrchestrator:
         # Analyze dotfiles if stow is available
         dotfiles_state = None
         if system_state.stow_available:
-            dotfiles_state = self.dotfiles_service.analyze_dotfiles(stow_available=system_state.stow_available)
+            dotfiles_state = self.dotfiles_service.state
             if dotfiles_state:
                 self.dotfiles_service.print_status_summary(dotfiles_state)
 
@@ -99,7 +99,7 @@ class BootstrapOrchestrator:
         StatusDisplay.print_system_status(system_state)
 
         if system_state.stow_available:
-            dotfiles_state = self.dotfiles_service.analyze_dotfiles(stow_available=system_state.stow_available)
+            dotfiles_state = self.dotfiles_service.state
             if dotfiles_state:
                 self.dotfiles_service.print_status_summary(dotfiles_state)
 
@@ -123,7 +123,7 @@ class BootstrapOrchestrator:
             error("GNU Stow not available. Run setup tools first.")
             return False
 
-        dotfiles_state = self.dotfiles_service.analyze_dotfiles(stow_available=system_state.stow_available)
+        dotfiles_state = self.dotfiles_service.state
 
         if not dotfiles_state:
             error("Failed to analyze dotfiles state")
@@ -136,13 +136,13 @@ class BootstrapOrchestrator:
 
         if dotfiles_state.has_broken_symlinks:
             say("Fixing broken symlinks...")
-            return self.dotfiles_service.restow_dotfiles()
+            return self.dotfiles_service.restow()
 
         if not dotfiles_state.has_issues:
             say("Dotfiles already properly applied")
             return True
 
-        return self.dotfiles_service.apply_dotfiles()
+        return self.dotfiles_service.apply()
 
     def cmd_setup_all(self):
         """Complete setup: environment + dotfiles"""

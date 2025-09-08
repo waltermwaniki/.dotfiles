@@ -197,7 +197,7 @@ class ActionBuilder:
         elif action_name == "restow":
 
             def action():
-                return dotfiles_service.restow_dotfiles()
+                return dotfiles_service.restow()
 
             return action
 

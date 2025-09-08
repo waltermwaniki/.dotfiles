@@ -65,108 +65,45 @@ class DotfilesService:
         self.default_target = Path.home()
         self._state = None
 
-    def analyze_dotfiles(self, stow_available: bool = True, force_refresh: bool = False) -> Optional[DotfilesState]:
-        """Analyze dotfiles status with loading indicator"""
-        if self._state is not None and not force_refresh:
-            return self._state
+    @property
+    def state(self) -> DotfilesState:
+        """Get current dotfiles state, analyzing if needed"""
+        if self._state is None:
+            self._state = self.refresh()
+        return self._state
 
+    def refresh(self) -> DotfilesState:
+        """Force refresh of dotfiles analysis"""
+        self._state = self._analyze()
+        self._state.update_status()
+        return self.state
+
+    def _analyze(self, stow_available: bool = True) -> DotfilesState:
+        """Analyze dotfiles status with loading indicator"""
         if not stow_available:
-            return DotfilesState(target_directory=self.default_target, stow_available=False, status="stow_missing")
+            state = DotfilesState(target_directory=self.default_target, stow_available=False, status="stow_missing")
+            return state
 
         target = self.default_target
 
         with LoadingIndicator("Analyzing dotfiles"):
             # Check for conflicts (what would happen if we tried to stow)
-            conflicts = self._check_conflicts(target)
+            conflicts = self._check_conflicts(repo_dir=self.repo_dir, target=target, package=self.package)
 
             # Check for broken symlinks
-            broken_symlinks = self._check_broken_symlinks(target)
+            broken_symlinks = self._check_broken_symlinks(repo_dir=self.repo_dir, target=target)
 
             # Check what's currently applied
-            applied_files = self._get_applied_files(target)
+            applied_files = self._get_applied_files(repo_dir=self.repo_dir, target=target, package=self.package)
 
-            self._state = DotfilesState(
+            state = DotfilesState(
                 target_directory=target,
                 stow_available=True,
                 conflicts=conflicts,
                 broken_symlinks=broken_symlinks,
                 applied_files=applied_files,
             )
-            self._state.update_status()
-
-        return self._state
-
-    def refresh_analysis(self, stow_available: bool = True) -> Optional[DotfilesState]:
-        """Force refresh of dotfiles analysis"""
-        return self.analyze_dotfiles(stow_available, force_refresh=True)
-
-    def _check_conflicts(self, target: Path) -> list[str]:
-        """Check for files that would conflict with stowing."""
-        try:
-            cmd = ["stow", "-n", "-v", "-t", str(target), self.package]
-            result = subprocess.run(cmd, cwd=self.repo_dir, capture_output=True, text=True)
-
-            conflicts = []
-            output = result.stdout + result.stderr
-
-            for line in output.split("\n"):
-                if "cannot stow" in line and "existing target" in line:
-                    # Extract filename from error message
-                    parts = line.split()
-                    for i, part in enumerate(parts):
-                        if part == "target" and i + 1 < len(parts):
-                            conflict_file = parts[i + 1].rstrip(".,;:")
-                            if conflict_file not in conflicts:
-                                conflicts.append(conflict_file)
-                            break
-
-            return conflicts
-        except subprocess.CalledProcessError:
-            return []
-
-    def _check_broken_symlinks(self, target: Path) -> list[str]:
-        """Check for broken symlinks in the target directory."""
-        broken = []
-        try:
-            # Find symlinks that point to our repo but are broken
-            for item in target.rglob("*"):
-                if item.is_symlink():
-                    try:
-                        resolved = item.resolve()
-                        # If it resolves to something in our repo but doesn't exist
-                        if str(resolved).startswith(str(self.repo_dir)) and not resolved.exists():
-                            relative_path = item.relative_to(target)
-                            broken.append(str(relative_path))
-                    except (OSError, ValueError):
-                        # Broken symlink
-                        try:
-                            relative_path = item.relative_to(target)
-                            broken.append(str(relative_path))
-                        except ValueError:
-                            pass
-        except PermissionError:
-            pass
-
-        return broken
-
-    def _get_applied_files(self, target: Path) -> list[str]:
-        """Get list of files that are currently applied via stow."""
-        applied = []
-        try:
-            # Find symlinks that point to our repo
-            for item in target.rglob("*"):
-                if item.is_symlink():
-                    try:
-                        resolved = item.resolve()
-                        if str(resolved).startswith(str(self.repo_dir / self.package)):
-                            relative_path = item.relative_to(target)
-                            applied.append(str(relative_path))
-                    except (OSError, ValueError):
-                        pass
-        except PermissionError:
-            pass
-
-        return applied
+            return state
 
     def _run_stow_command(self, args: list[str], target: Path) -> bool:
         """Runs a stow command with the given arguments."""
@@ -194,10 +131,13 @@ class DotfilesService:
             error("GNU Stow not found. Please install it first.")
             return False
 
-    def apply_dotfiles(self, adopt: bool = False) -> bool:
+    def apply(self, adopt: bool = False) -> bool:
         """Apply dotfiles using stow."""
-        if not self._state:
-            error("Dotfiles state not analyzed. Call analyze_dotfiles() first.")
+        # Ensure we have current state
+        current_state = self.state
+
+        if not current_state.stow_available:
+            error("GNU Stow not available. Cannot apply dotfiles.")
             return False
 
         args = ["-v"]
@@ -205,45 +145,50 @@ class DotfilesService:
             args.append("--adopt")
 
         with LoadingIndicator("Applying dotfiles"):
-            result = self._run_stow_command(args, self._state.target_directory)
+            result = self._run_stow_command(args, current_state.target_directory)
 
         if result:
             success("Dotfiles applied successfully!")
             # Refresh state after successful application
-            self.refresh_analysis(stow_available=True)
+            self.refresh()
             return True
 
         return False
 
-    def restow_dotfiles(self) -> bool:
+    def restow(self) -> bool:
         """Re-apply dotfiles after making changes."""
-        if not self._state:
-            error("Dotfiles state not analyzed. Call analyze_dotfiles() first.")
+        # Ensure we have current state
+        current_state = self.state
+
+        if not current_state.stow_available:
+            error("GNU Stow not available. Cannot restow dotfiles.")
             return False
 
-        say(f"Re-applying dotfiles to: {self._state.target_directory}")
+        say(f"Re-applying dotfiles to: {current_state.target_directory}")
 
         args = ["-R", "-v"]  # -R for restow, -v for verbose
 
         with LoadingIndicator("Re-stowing dotfiles"):
-            result = self._run_stow_command(args, self._state.target_directory)
+            result = self._run_stow_command(args, current_state.target_directory)
 
         if result:
             success("Dotfiles re-applied successfully!")
             # Refresh state after successful re-stow
-            self.refresh_analysis(stow_available=True)
+            self.refresh()
             return True
 
         return False
 
     def resolve_conflicts_backup(self) -> bool:
         """Resolve conflicts by backing up existing files."""
-        if not self._state or not self._state.has_conflicts:
+        current_state = self.state
+
+        if not current_state.has_conflicts:
             say("No conflicts to resolve.")
             return True
 
-        target = self._state.target_directory
-        conflicts = self._state.conflicts
+        target = current_state.target_directory
+        conflicts = current_state.conflicts
 
         print(f"\n{colorize('Conflicts to resolve:', AnsiColor.YELLOW)}")
         for conflict in conflicts:
@@ -264,12 +209,13 @@ class DotfilesService:
 
     def resolve_conflicts_adopt(self) -> bool:
         """Resolve conflicts by adopting existing files into the repository."""
-        if not self._state or not self._state.has_conflicts:
+        current_state = self.state
+
+        if not current_state.has_conflicts:
             say("No conflicts to resolve.")
             return True
 
-        _ = self._state.target_directory
-        conflicts = self._state.conflicts
+        conflicts = current_state.conflicts
 
         print(f"\n{colorize('Conflicts to resolve:', AnsiColor.YELLOW)}")
         for conflict in conflicts:
@@ -287,7 +233,7 @@ class DotfilesService:
             say("Operation cancelled.")
             return False
 
-        return self.apply_dotfiles(adopt=True)
+        return self.apply(adopt=True)
 
     def _backup_and_apply(self, target: Path) -> bool:
         """Backup existing files and apply dotfiles."""
@@ -326,7 +272,7 @@ class DotfilesService:
                     say(f"Backed up and removed: {conflict_file}")
 
             # Now apply dotfiles
-            return self.apply_dotfiles()
+            return self.apply()
 
         except subprocess.CalledProcessError as e:
             error(f"Failed to backup conflicts: {e}")
@@ -335,12 +281,7 @@ class DotfilesService:
     def print_status_summary(self, state: Optional[DotfilesState] = None):
         """Print a summary of the dotfiles status."""
         if state is None:
-            state = self._state
-
-        if not state:
-            print(f"\n{colorize('Dotfiles Status:', AnsiColor.BLUE)}")
-            print("  ! Dotfiles management not available")
-            return
+            state = self.state
 
         target = state.target_directory
         conflicts = state.conflicts
@@ -373,12 +314,13 @@ class DotfilesService:
     def show_detailed_conflicts(self, conflicts: Optional[list[str]] = None):
         """Show detailed information about conflicts."""
         if conflicts is None:
-            if not self._state or not self._state.has_conflicts:
+            current_state = self.state
+            if not current_state.has_conflicts:
                 say("No conflicts to display.")
                 return
-            conflicts = self._state.conflicts
+            conflicts = current_state.conflicts
 
-        target = self._state.target_directory if self._state else self.default_target
+        target = self.state.target_directory
 
         print(f"\n{colorize('Detailed conflict information:', AnsiColor.YELLOW)}")
 
@@ -409,3 +351,74 @@ class DotfilesService:
         # Check if home package directory exists
         home_package = self.repo_dir / self.package
         return home_package.exists() and home_package.is_dir()
+
+    @staticmethod
+    def _check_conflicts(repo_dir: Path, target: Path, package: str) -> list[str]:
+        """Check for files that would conflict with stowing."""
+        try:
+            cmd = ["stow", "-n", "-v", "-t", str(target), package]
+            result = subprocess.run(cmd, cwd=repo_dir, capture_output=True, text=True)
+
+            conflicts = []
+            output = result.stdout + result.stderr
+
+            for line in output.split("\n"):
+                if "cannot stow" in line and "existing target" in line:
+                    # Extract filename from error message
+                    parts = line.split()
+                    for i, part in enumerate(parts):
+                        if part == "target" and i + 1 < len(parts):
+                            conflict_file = parts[i + 1].rstrip(".,;:")
+                            if conflict_file not in conflicts:
+                                conflicts.append(conflict_file)
+                            break
+
+            return conflicts
+        except subprocess.CalledProcessError:
+            return []
+
+    @staticmethod
+    def _check_broken_symlinks(repo_dir: Path, target: Path) -> list[str]:
+        """Check for broken symlinks in the target directory."""
+        broken = []
+        try:
+            # Find symlinks that point to our repo but are broken
+            for item in target.rglob("*"):
+                if item.is_symlink():
+                    try:
+                        resolved = item.resolve()
+                        # If it resolves to something in our repo but doesn't exist
+                        if str(resolved).startswith(str(repo_dir)) and not resolved.exists():
+                            relative_path = item.relative_to(target)
+                            broken.append(str(relative_path))
+                    except (OSError, ValueError):
+                        # Broken symlink
+                        try:
+                            relative_path = item.relative_to(target)
+                            broken.append(str(relative_path))
+                        except ValueError:
+                            pass
+        except PermissionError:
+            pass
+
+        return broken
+
+    @staticmethod
+    def _get_applied_files(repo_dir: Path, target: Path, package: str) -> list[str]:
+        """Get list of files that are currently applied via stow."""
+        applied = []
+        try:
+            # Find symlinks that point to our repo
+            for item in target.rglob("*"):
+                if item.is_symlink():
+                    try:
+                        resolved = item.resolve()
+                        if str(resolved).startswith(str(repo_dir / package)):
+                            relative_path = item.relative_to(target)
+                            applied.append(str(relative_path))
+                    except (OSError, ValueError):
+                        pass
+        except PermissionError:
+            pass
+
+        return applied
