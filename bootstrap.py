@@ -110,6 +110,7 @@ class BootstrapOrchestrator:
         foundational_tools = [
             ("stow", "GNU Stow (required for dotfiles management)"),
             ("mas", "Mac App Store CLI (for App Store apps)"),
+            ("uv", "Python package and project manager (for tool installation)"),
         ]
 
         for tool, description in foundational_tools:
@@ -131,6 +132,59 @@ class BootstrapOrchestrator:
                 say(f"{tool} already installed")
 
         return True
+
+    def _check_uv_installed(self):
+        """Check if uv is installed."""
+        return shutil.which("uv") is not None
+
+    def _install_brewfile_package_manager(self):
+        """Install brewfile package manager using uv tool install from GitHub."""
+        if not self._check_uv_installed():
+            error("uv is required to install brewfile package manager")
+            return False
+
+        say("Installing brewfile package manager from GitHub...")
+        
+        # Check if brewfile is already installed
+        try:
+            result = subprocess.run(
+                ["uv", "tool", "list"],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            if result.returncode == 0 and "brewfile" in result.stdout:
+                say("brewfile package manager already installed")
+                return self._is_brewfile_functional()
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            pass  # Continue with installation
+        
+        # Install brewfile using uv tool install from GitHub
+        try:
+            github_url = "git+https://github.com/waltermwaniki/brewfile.git"
+            
+            say(f"Installing brewfile from {github_url}...")
+            result = subprocess.run(
+                ["uv", "tool", "install", github_url],
+                capture_output=True,
+                text=True,
+                timeout=120
+            )
+            
+            if result.returncode == 0:
+                success("brewfile package manager installed successfully")
+                return self._is_brewfile_functional()
+            else:
+                error(f"Failed to install brewfile: {result.stderr if result.stderr else 'Unknown error'}")
+                return False
+                
+        except subprocess.TimeoutExpired:
+            error("brewfile installation timed out")
+            return False
+        except Exception as e:
+            error(f"Failed to install brewfile package manager: {e}")
+            return False
+
 
     def _prompt_mas_signin_if_needed(self):
         """Guide user through App Store sign-in if needed."""
@@ -158,6 +212,11 @@ class BootstrapOrchestrator:
         if not self._install_foundational_tools():
             error("Failed to install foundational tools")
             return False
+        
+        # Install brewfile package manager after foundational tools
+        if not self._install_brewfile_package_manager():
+            warn("Failed to set up brewfile package manager")
+            return False
 
         # Check mas sign-in status and provide guidance
         self._prompt_mas_signin_if_needed()
@@ -169,8 +228,7 @@ class BootstrapOrchestrator:
 
     def _check_brewfile_available(self):
         """Check if brewfile utility is available."""
-        brewfile_path = self.repo_dir / "brewfile.py"
-        return brewfile_path.exists()
+        return shutil.which("brewfile") is not None
 
     def _check_dotfiles_available(self):
         """Check if dotfiles.py is available."""
@@ -185,10 +243,9 @@ class BootstrapOrchestrator:
         try:
             # Just check if it can run - don't parse complex output
             result = subprocess.run(
-                [sys.executable, str(self.repo_dir / "brewfile.py"), "status"],
+                ["brewfile", "status"],
                 capture_output=True,
                 text=True,
-                cwd=self.repo_dir,
                 timeout=30,  # Prevent hanging
             )
             return result.returncode == 0
@@ -238,12 +295,14 @@ class BootstrapOrchestrator:
             needs_install.append("stow")
         if not self._check_mas_installed():
             needs_install.append("mas")
+        if not self._check_uv_installed():
+            needs_install.append("uv")
 
         if needs_install:
             print(f"  ! Foundational tools missing: {', '.join(needs_install)}")
             print("  → Add '(0) Install foundational tools' option to menu")
         else:
-            print("  ✓ Foundational tools installed (stow, mas)")
+            print("  ✓ Foundational tools installed (stow, mas, uv)")
 
         # Check mas sign-in status
         if self._check_mas_installed():
@@ -255,9 +314,13 @@ class BootstrapOrchestrator:
 
         # Check package management
         if self._is_brewfile_functional():
-            print("  ✓ Package management ready")
+            print("  ✓ Package management ready (brewfile via uv)")
         else:
             print("  ! Package management needs attention")
+            if not self._check_brewfile_available():
+                print("    → brewfile command not found (run foundational tools setup)")
+            else:
+                print("    → brewfile command found but not functional")
 
         # Check dotfiles management
         if self._is_dotfiles_functional():
@@ -271,8 +334,7 @@ class BootstrapOrchestrator:
         """Launch the interactive brewfile tool."""
         try:
             say("Launching package management...")
-            brewfile_cmd = [sys.executable, str(self.repo_dir / "brewfile.py")]
-            result = subprocess.run(brewfile_cmd, cwd=self.repo_dir)
+            result = subprocess.run(["brewfile"])
             return result.returncode == 0
         except (subprocess.CalledProcessError, FileNotFoundError) as e:
             error(f"Failed to launch package management: {e}")
@@ -298,8 +360,7 @@ class BootstrapOrchestrator:
             print(f"\n{YELLOW}Package Status (via brewfile):{RESET}")
             try:
                 _ = subprocess.run(
-                    [sys.executable, str(self.repo_dir / "brewfile.py"), "status"],
-                    cwd=self.repo_dir,
+                    ["brewfile", "status"],
                     timeout=30,
                 )
             except (
@@ -311,7 +372,7 @@ class BootstrapOrchestrator:
         else:
             print(f"\n{YELLOW}Package Status:{RESET}")
             print("  ! Package management not functional")
-            print("  → Ensure Homebrew is installed and brewfile.py is available")
+            print("  → Ensure Homebrew and uv are installed, then run foundational tools setup")
 
         # Delegate to dotfiles for dotfiles status
         if self._is_dotfiles_functional():
@@ -353,11 +414,20 @@ class BootstrapOrchestrator:
             needs_install.append("stow")
         if not self._check_mas_installed():
             needs_install.append("mas")
+        if not self._check_uv_installed():
+            needs_install.append("uv")
+
+        # Check if brewfile needs installation (even if foundational tools are installed)
+        needs_brewfile = not self._is_brewfile_functional() and self._check_uv_installed()
 
         # Offer foundational tools installation if needed
         if needs_install:
             print(f"  ({option_num}) Install foundational tools ({', '.join(needs_install)})")
             menu_options.append(("install_tools", self._install_and_setup_tools))
+            option_num += 1
+        elif needs_brewfile:
+            print(f"  ({option_num}) Install brewfile package manager")
+            menu_options.append(("install_brewfile", self._install_brewfile_package_manager))
             option_num += 1
 
         # Always offer package management if brewfile is functional

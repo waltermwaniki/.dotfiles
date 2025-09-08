@@ -8,6 +8,7 @@
       "brews": [
         "stow",
         "mas",
+        "uv",
         "starship",
         "zsh-autosuggestions",
         "zsh-syntax-highlighting",
@@ -30,7 +31,6 @@
     "dev": {
       "taps": [],
       "brews": [
-        "uv",
         "python@3.13",
         "node",
         "pnpm",
