@@ -1130,14 +1130,64 @@ def main():
     manager = BrewfileManager()
 
     if command == "init" or command == "select":
+        # Handle help for init command
+        if len(sys.argv) >= 3 and sys.argv[2] in ["-h", "--help"]:
+            print(f"{AnsiColor.BLUE}brewfile init{AnsiColor.RESET} - Initialize machine configuration")
+            print("\nDESCRIPTION:")
+            print("  Configure which package groups this machine should use.")
+            print("  This must be run before using other commands.")
+            print("\nEXAMPLE:")
+            print("  brewfile init    # Interactive group selection")
+            return
         manager.cmd_init()
     elif command == "status":
+        # Handle help for status command
+        if len(sys.argv) >= 3 and sys.argv[2] in ["-h", "--help"]:
+            print(f"{AnsiColor.BLUE}brewfile status{AnsiColor.RESET} - Show package status and synchronization state")
+            print("\nDESCRIPTION:")
+            print("  Shows which packages are installed, missing, or extra.")
+            print("  Compares your configuration against the actual system state.")
+            print("\nEXAMPLE:")
+            print("  brewfile status  # Show detailed package status")
+            return
         manager.cmd_status()
     elif command == "sync-adopt":
+        # Handle help for sync-adopt command
+        if len(sys.argv) >= 3 and sys.argv[2] in ["-h", "--help"]:
+            print(f"{AnsiColor.BLUE}brewfile sync-adopt{AnsiColor.RESET} - Install missing packages + adopt extras")
+            print("\nDESCRIPTION:")
+            print("  Installs missing packages and adds extra packages to your config.")
+            print("  Safe operation - nothing gets removed from your system.")
+            print("\nEXAMPLE:")
+            print("  brewfile sync-adopt  # Sync packages safely")
+            return
         manager.cmd_sync_adopt()
     elif command == "sync-cleanup":
+        # Handle help for sync-cleanup command
+        if len(sys.argv) >= 3 and sys.argv[2] in ["-h", "--help"]:
+            print(f"{AnsiColor.BLUE}brewfile sync-cleanup{AnsiColor.RESET} - Install missing packages + remove extras")
+            print("\nDESCRIPTION:")
+            print("  Installs missing packages and removes extra packages from your system.")
+            print(f"  {AnsiColor.RED}WARNING: This will uninstall packages not in your config!{AnsiColor.RESET}")
+            print("\nEXAMPLE:")
+            print("  brewfile sync-cleanup  # Sync packages (destructive)")
+            return
         manager.cmd_sync_cleanup()
     elif command == "add":
+        # Handle help for add command
+        if len(sys.argv) >= 3 and sys.argv[2] in ["-h", "--help"]:
+            print(f"{AnsiColor.BLUE}brewfile add{AnsiColor.RESET} - Add package to configuration and install")
+            print("\nUSAGE:")
+            print("  brewfile add <package_name> [--cask]")
+            print("\nARGUMENTS:")
+            print("  <package_name>    Name of the package to install")
+            print("\nOPTIONS:")
+            print("  --cask           Force package to be treated as a cask")
+            print("\nEXAMPLES:")
+            print("  brewfile add neovim          # Add formula (auto-detected)")
+            print("  brewfile add --cask chrome   # Add cask (forced)")
+            return
+        
         if len(sys.argv) < 3:
             error("Usage: brewfile add <package_name> [--cask]")
             sys.exit(1)
@@ -1146,12 +1196,37 @@ def main():
         package_type = PackageType.CASK if "--cask" in sys.argv else None
         manager.cmd_add(package_name, package_type)
     elif command == "remove":
+        # Handle help for remove command
+        if len(sys.argv) >= 3 and sys.argv[2] in ["-h", "--help"]:
+            print(f"{AnsiColor.BLUE}brewfile remove{AnsiColor.RESET} - Remove package from system and configuration")
+            print("\nUSAGE:")
+            print("  brewfile remove <package_name>")
+            print("\nARGUMENTS:")
+            print("  <package_name>    Name of the package to remove")
+            print("\nNOTE:")
+            print("  This command removes the package from both your system and configuration.")
+            print("  It's idempotent - only removes from config if system removal succeeds.")
+            print("\nEXAMPLES:")
+            print("  brewfile remove neovim       # Remove neovim from system and config")
+            print("  brewfile remove --cask chrome # Remove chrome cask")
+            return
+        
         if len(sys.argv) < 3:
             error("Usage: brewfile remove <package_name>")
             sys.exit(1)
         package_name = sys.argv[2]
         manager.cmd_remove(package_name)
     elif command == "edit":
+        # Handle help for edit command
+        if len(sys.argv) >= 3 and sys.argv[2] in ["-h", "--help"]:
+            print(f"{AnsiColor.BLUE}brewfile edit{AnsiColor.RESET} - Open configuration file in editor")
+            print("\nDESCRIPTION:")
+            print("  Opens the brewfile configuration file in your default editor.")
+            print(f"  Uses $EDITOR environment variable, defaults to nano.")
+            print(f"  Config file: {AnsiColor.GRAY}~/.config/brewfile.json{AnsiColor.RESET}")
+            print("\nEXAMPLE:")
+            print("  brewfile edit    # Edit configuration manually")
+            return
         manager.cmd_edit()
     else:
         error(f"Unknown command: {command}")
