@@ -383,12 +383,62 @@ class BrewfileConfig:
 
         return found_package_type
 
+    def dump_brewfile(self, machine_name: str, brewfile_path: Path) -> None:
+        """Generate Brewfile from config for a specific machine."""
+        packages = self.get_machine_packages(machine_name)
+
+        # Group packages by type
+        taps = [p.name for p in packages if p.package_type == PackageType.TAP]
+        brews = [p.name for p in packages if p.package_type == PackageType.BREW]
+        casks = [p.name for p in packages if p.package_type == PackageType.CASK]
+        mas_apps = [p.name for p in packages if p.package_type == PackageType.MAS]
+
+        lines = []
+
+        # Add taps
+        for tap in taps:
+            lines.append(f'tap "{tap}"')
+
+        if taps:
+            lines.append("")  # Empty line after taps
+
+        # Add brews
+        for brew in brews:
+            lines.append(f'brew "{brew}"')
+
+        if brews:
+            lines.append("")  # Empty line after brews
+
+        # Add casks
+        for cask in casks:
+            lines.append(f'cask "{cask}"')
+
+        if casks:
+            lines.append("")  # Empty line after casks
+
+        # Add mas apps with IDs
+        for mas_app in mas_apps:
+            if "::" in mas_app:
+                app_name, app_id = mas_app.split("::", 1)
+                lines.append(f'mas "{app_name}", id: {app_id}')
+            else:
+                # Fallback for entries without ID
+                lines.append(f'# mas "{mas_app}" # ID needed - check with: mas list')
+
+        content = "\n".join(lines) + "\n"
+        try:
+            with open(brewfile_path, "w") as f:
+                f.write(content)
+        except OSError as e:
+            die(f"Could not write Brewfile: {e}")
+
 
 class PackageAnalyzer:
     """Handles all package detection, analysis, and state management."""
 
     def __init__(self):
         """Initialize analyzer with lazy loading."""
+        self.brewfile_path = Path.home() / "Brewfile"
         self._installed_packages = None  # Lazy-loaded
 
     @property
@@ -440,7 +490,11 @@ class PackageAnalyzer:
     def _dump_brewfile_from_system(self) -> None:
         """Generate Brewfile from current system state (all installed packages)."""
         try:
-            subprocess.run(["brew", "bundle", "dump", "--force", "--no-vscode"], check=True, capture_output=True)
+            subprocess.run(
+                ["brew", "bundle", "dump", "--force", "--no-vscode", "--file", str(self.brewfile_path)],
+                check=True,
+                capture_output=True,
+            )
         except subprocess.CalledProcessError as e:
             die(f"Could not dump system Brewfile: {e}")
 
@@ -608,7 +662,6 @@ class BrewfileManager:
 
     def __init__(self):
         self.config_file = Path.home() / ".config" / "brewfile" / "config.json"
-        self.brewfile_path = Path.home() / "Brewfile"
         self.machine_name = socket.gethostname().split(".")[0]  # Short hostname
         self.config = BrewfileConfig.load(self.config_file)
         self._analyzer = PackageAnalyzer()
@@ -645,60 +698,11 @@ class BrewfileManager:
         if not self.is_configured:
             die("Machine not configured. Run 'brewfile init' first.")
 
-        if require_brewfile and not self.brewfile_path.exists():
+        if require_brewfile and not self.analyzer.brewfile_path.exists():
             say("Generating Brewfile first...")
-            self._dump_brewfile_from_config()
+            self.config.dump_brewfile(self.machine_name, self.analyzer.brewfile_path)
 
         return self.analyzer, self.machine_groups, self.machine_packages
-
-    def _dump_brewfile_from_config(self) -> None:
-        """Generate Brewfile from config only (configured packages for this machine)."""
-        packages = self.config.get_machine_packages(self.machine_name)
-
-        # Group packages by type
-        taps = [p.name for p in packages if p.package_type == PackageType.TAP]
-        brews = [p.name for p in packages if p.package_type == PackageType.BREW]
-        casks = [p.name for p in packages if p.package_type == PackageType.CASK]
-        mas_apps = [p.name for p in packages if p.package_type == PackageType.MAS]
-
-        lines = []
-
-        # Add taps
-        for tap in taps:
-            lines.append(f'tap "{tap}"')
-
-        if taps:
-            lines.append("")  # Empty line after taps
-
-        # Add brews
-        for brew in brews:
-            lines.append(f'brew "{brew}"')
-
-        if brews:
-            lines.append("")  # Empty line after brews
-
-        # Add casks
-        for cask in casks:
-            lines.append(f'cask "{cask}"')
-
-        if casks:
-            lines.append("")  # Empty line after casks
-
-        # Add mas apps with IDs
-        for mas_app in mas_apps:
-            if "::" in mas_app:
-                app_name, app_id = mas_app.split("::", 1)
-                lines.append(f'mas "{app_name}", id: {app_id}')
-            else:
-                # Fallback for entries without ID
-                lines.append(f'# mas "{mas_app}" # ID needed - check with: mas list')
-
-        content = "\n".join(lines) + "\n"
-        try:
-            with open(self.brewfile_path, "w") as f:
-                f.write(content)
-        except OSError as e:
-            die(f"Could not write Brewfile: {e}")
 
     def _run_brew_bundle(self, command: str, capture_output: bool = True) -> subprocess.CompletedProcess:
         """Run brew bundle command."""
@@ -754,7 +758,7 @@ class BrewfileManager:
         success(f"Machine {self.machine_name} configured with groups: {', '.join(selected_groups)}")
 
         # Generate initial Brewfile
-        self._dump_brewfile_from_config()
+        self.config.dump_brewfile(self.machine_name, self.analyzer.brewfile_path)
         success(f"Generated ~/Brewfile with packages from: {', '.join(selected_groups)}")
 
     def cmd_status(self) -> tuple[int, int]:
@@ -875,7 +879,7 @@ class BrewfileManager:
             self.config.save(self.config_file)
 
             # Regenerate Brewfile
-            self._dump_brewfile_from_config()
+            self.config.dump_brewfile(self.machine_name, self.analyzer.brewfile_path)
 
         success("Sync + Adopt complete!")
 
@@ -917,7 +921,7 @@ class BrewfileManager:
             return
 
         # Generate Brewfile from CONFIG ONLY for both install and cleanup
-        self._dump_brewfile_from_config()
+        self.config.dump_brewfile(self.machine_name, self.analyzer.brewfile_path)
 
         # Install missing packages first
         if missing_packages:
@@ -961,7 +965,7 @@ class BrewfileManager:
             try:
                 self.config.add_package(target_group, package_type, package_name, self.config_file)
                 # Regenerate Brewfile after config change
-                self._dump_brewfile_from_config()
+                self.config.dump_brewfile(self.machine_name, self.analyzer.brewfile_path)
                 success(f"Added {package_name} to group '{target_group}' and installed successfully")
             except Exception as config_error:
                 # Rollback: remove the package we just installed
@@ -1069,7 +1073,7 @@ class BrewfileManager:
             rm_pkg_type = self.config.remove_package(package_name, self.config_file)
 
             # 5. Regenerate Brewfile from config
-            self._dump_brewfile_from_config()
+            self.config.dump_brewfile(self.machine_name, self.analyzer.brewfile_path)
 
             success(
                 f"Removed {package_name} ({rm_pkg_type.value if rm_pkg_type else 'unknown'}) from system and config"
