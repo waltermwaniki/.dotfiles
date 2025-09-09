@@ -100,13 +100,13 @@ class StatusDisplay:
             needs_install.append("stow")
         if not system_state.mas_available:
             needs_install.append("mas")
-        if not system_state.uv_available:
-            needs_install.append("uv")
+        if not system_state.brewfile_functional:
+            needs_install.append("brewfile")
 
         if needs_install:
             print(f"  ! Foundational tools missing: {', '.join(needs_install)}")
         else:
-            print("  ✓ Foundational tools installed (stow, mas, uv)")
+            print("  ✓ Foundational tools installed (stow, mas, brewfile)")
 
         # Check mas sign-in status
         if system_state.mas_available:
@@ -117,18 +117,15 @@ class StatusDisplay:
 
         # Check package management
         if system_state.brewfile_functional:
-            print("  ✓ Package management ready (brewfile via uv)")
+            print("  ✓ Package management ready (brewfile via Homebrew)")
         else:
             print("  ! Package management needs attention")
-            if not system_state.uv_available:
-                print("    → uv not available (run foundational tools setup)")
-            else:
-                import shutil
+            import shutil
 
-                if not shutil.which("brewfile"):
-                    print("    → brewfile command not found (run foundational tools setup)")
-                else:
-                    print("    → brewfile command found but not functional")
+            if not shutil.which("brewfile"):
+                print("    → brewfile command not found (run foundational tools setup)")
+            else:
+                print("    → brewfile command found but not functional")
 
         return True
 

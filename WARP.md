@@ -10,23 +10,21 @@ This is a **dotfiles repository** that uses **GNU Stow** for symlink management.
 
 - **`home/`** - Contains all dotfiles that mirror the `$HOME` directory structure
 - **`bootstrap.py`** - Modern Python-based bootstrap script with enhanced features
-- **`brewfile.py`** - Source for the brewfile utility (symlinked to `~/.local/bin/brewfile`)
 - **`aptfile.py`** - Source for the aptfile utility (symlinked to `~/.local/bin/aptfile`)
 - **`bootstrap.sh`** - Legacy Bash bootstrap script
 - **`~/.config/brewfile.json`** - Modern JSON-based package configuration (macOS)
 - **`~/Brewfile`** - Generated Brewfile for brew bundle (macOS)
 - **`Aptfile`** + **`Dnffile`** - Linux package management for Ubuntu and Rocky Linux
-- **`home/.local/bin/brewfile`** - Modern Python-based Brewfile manager (macOS)
 - **`home/.local/bin/aptfile`** - Modern Python-based Linux package manager (Linux)
-- **`home/.local/bin/brewfile.sh`** - Legacy Bash version (deprecated)
+- **`waltermwaniki/brewfile` tap** - Homebrew tap for brewfile package manager (macOS)
 
 ## Bootstrap Process
 
 The bootstrap script follows a logical four-step process for setting up a new machine:
 
 1. **Install package manager** (Homebrew on macOS, apt/dnf on Linux) - Ensures package manager is available
-2. **Deploy package management utility** - Symlinks platform-specific utility (`brewfile.py` or `aptfile.py`)
-3. **Install packages** - Uses the deployed utility to install all dependencies including GNU Stow
+2. **Install foundational tools** - Installs stow, mas, and brewfile (from waltermwaniki/brewfile tap)
+3. **Install packages** - Uses brewfile to install all dependencies from configuration
 4. **Apply dotfiles** - Uses Stow to create symlinks to your configurations
 
 This sequence ensures all dependencies are met before attempting to apply dotfiles.
@@ -77,7 +75,7 @@ cd "$HOME/.dotfiles"
 
 #### macOS (Homebrew)
 
-Use the deployed `brewfile` utility for package management:
+Use the installed `brewfile` utility for package management:
 
 ```bash
 brewfile status                     # Show package status and what needs to be installed/removed
@@ -204,11 +202,11 @@ Shell configurations are modular:
 2. Or install normally: `brew install <package>`, then `brewfile adopt` to add to config
 3. Run `brewfile generate` to update ~/Brewfile from the JSON configuration
 
-### When Modifying Brewfile Utility
+### When Updating Brewfile Utility
 
-1. Edit the source file: `brewfile.py` in the repository root
-2. Test changes by running `python3 brewfile.py <command>`
-3. **No deployment needed**: `home/.local/bin/brewfile` is automatically symlinked to the source via stow
+1. The brewfile utility is installed from the `waltermwaniki/brewfile` Homebrew tap
+2. Updates are distributed via new releases on PyPI and GitHub
+3. Run `brew upgrade brewfile` to update to the latest version
 
 ### System Maintenance
 

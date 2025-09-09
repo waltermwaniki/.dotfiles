@@ -32,6 +32,16 @@ class BootstrapOrchestrator:
             return Path(__file__).resolve().parent
         except NameError:
             return Path.cwd()
+    
+    def _print_package_status(self):
+        """Print package status using brewfile"""
+        import subprocess
+        try:
+            result = subprocess.run(["brewfile", "status"], text=True, timeout=30)
+            # brewfile status already includes its own output formatting
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+            # If brewfile fails, just skip the package status
+            pass
 
     def cmd_interactive(self):
         """Main interactive bootstrap orchestrator with unified dotfiles management."""
@@ -50,6 +60,10 @@ class BootstrapOrchestrator:
             dotfiles_state = self.dotfiles_service.state
             if dotfiles_state:
                 self.dotfiles_service.print_status_summary(dotfiles_state)
+        
+        # Show package status if brewfile is functional
+        if system_state.brewfile_functional:
+            self._print_package_status()
 
         # Build and display main menu
         self._build_and_show_menu(system_state, dotfiles_state)
@@ -102,6 +116,10 @@ class BootstrapOrchestrator:
             dotfiles_state = self.dotfiles_service.state
             if dotfiles_state:
                 self.dotfiles_service.print_status_summary(dotfiles_state)
+        
+        # Show package status if brewfile is functional
+        if system_state.brewfile_functional:
+            self._print_package_status()
 
     def cmd_setup_tools(self):
         """Attempt to set up foundational tools"""

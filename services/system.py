@@ -19,7 +19,6 @@ class SystemState:
     mas_available: bool = False
     mas_signed_in: bool = False
     mas_account: Optional[str] = None
-    uv_available: bool = False
     brewfile_functional: bool = False
 
 
@@ -99,24 +98,16 @@ class SystemService:
                 homebrew_available=_check_command("brew"),
                 stow_available=_check_command("stow"),
                 mas_available=_check_command("mas"),
-                uv_available=_check_command("uv"),
             )
 
             # Note: Homebrew installation requires user interaction, so we skip auto-install
 
             if current_state.homebrew_available:
-                # Try to install missing foundational tools
+                # Try to install missing foundational tools (including brewfile)
                 self._attempt_foundational_tools_install()
                 current_state.stow_available = _check_command("stow")
                 current_state.mas_available = _check_command("mas")
-                current_state.uv_available = _check_command("uv")
-
-                # Try to install brewfile if uv is available
-                if current_state.uv_available:
-                    self._attempt_brewfile_install()
-                    current_state.brewfile_functional = _check_brewfile_functional()
-                else:
-                    current_state.brewfile_functional = False
+                current_state.brewfile_functional = _check_brewfile_functional()
             else:
                 current_state.brewfile_functional = False
 
@@ -133,7 +124,19 @@ class SystemService:
         if not _check_command("brew"):
             return False
 
-        missing_tools = ["stow", "mas", "uv"]
+        # First ensure the tap is added for brewfile
+        try:
+            subprocess.run(
+                ["brew", "tap", "waltermwaniki/brewfile"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError:
+            # Ignore tap failures - brewfile might still be available
+            pass
+
+        missing_tools = ["stow", "mas", "waltermwaniki/brewfile/brewfile"]
 
         for tool in missing_tools:
             if not shutil.which(tool):
@@ -150,26 +153,6 @@ class SystemService:
 
         return True
 
-    def _attempt_brewfile_install(self) -> bool:
-        """Silently attempt to install brewfile package manager"""
-        if not _check_command("uv"):
-            return False
-
-        # Check if already installed
-        try:
-            result = subprocess.run(["uv", "tool", "list"], capture_output=True, text=True, timeout=30)
-            if result.returncode == 0 and "brewfile" in result.stdout:
-                return True
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-            pass
-
-        # Install from GitHub silently
-        try:
-            github_url = "git+https://github.com/waltermwaniki/brewfile.git"
-            result = subprocess.run(["uv", "tool", "install", github_url], capture_output=True, text=True, timeout=120)
-            return result.returncode == 0
-        except (subprocess.TimeoutExpired, Exception):
-            return False
 
 
 def _check_command(command: str) -> bool:

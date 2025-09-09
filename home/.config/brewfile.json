@@ -3,12 +3,13 @@
   "packages": {
     "core": {
       "taps": [
-        "homebrew/autoupdate"
+        "homebrew/autoupdate",
+        "waltermwaniki/brewfile"
       ],
       "brews": [
         "stow",
         "mas",
-        "uv",
+        "waltermwaniki/brewfile/brewfile",
         "starship",
         "zsh-autosuggestions",
         "zsh-syntax-highlighting",
@@ -31,6 +32,7 @@
     "dev": {
       "taps": [],
       "brews": [
+        "uv",
         "python@3.13",
         "node",
         "pnpm",
