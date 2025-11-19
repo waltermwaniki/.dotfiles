@@ -1,11 +1,34 @@
 {
-  "version": "1.0",
+  "machines": {
+    "OSXLT3QF7WY": [
+      "core",
+      "dev",
+      "mac-utils",
+      "OSXLT3QF7WY"
+    ],
+    "walters-mbp": [
+      "core",
+      "dev",
+      "mac-utils"
+    ]
+  },
   "packages": {
-    "core": {
-      "taps": [
-        "homebrew/autoupdate",
-        "waltermwaniki/brewfile"
+    "OSXLT3QF7WY": {
+      "brews": [
+        "libusb",
+        "xz"
       ],
+      "casks": [
+        "github"
+      ],
+      "mas": [
+        "Goodnotes::1444383602",
+        "Microsoft Outlook::985367838",
+        "Windows App::1295203466"
+      ],
+      "taps": []
+    },
+    "core": {
       "brews": [
         "stow",
         "mas",
@@ -27,74 +50,45 @@
         "font-monaspace",
         "ghostty"
       ],
-      "mas": []
+      "mas": [],
+      "taps": [
+        "homebrew/autoupdate",
+        "waltermwaniki/brewfile"
+      ]
     },
     "dev": {
-      "taps": [],
       "brews": [
         "uv",
-        "python@3.13",
         "node",
         "pnpm",
-        "gemini-cli",
         "gh",
         "neovim"
       ],
       "casks": [
-        "warp",
         "zed",
-        "chatgpt",
         "visual-studio-code"
       ],
-      "mas": []
-    },
-    "mac-utils": {
-      "taps": [],
-      "brews": [],
-      "casks": [
-        "logi-options+",
-        "caffeine"
-      ],
-      "mas": []
+      "mas": [],
+      "taps": []
     },
     "gaming": {
-      "taps": [],
       "brews": [],
       "casks": [
         "epic-games",
         "steam"
       ],
-      "mas": []
+      "mas": [],
+      "taps": []
     },
-    "OSXLT3QF7WY": {
-      "taps": [],
-      "brews": [
-        "libusb",
-        "xz"
-      ],
+    "mac-utils": {
+      "brews": [],
       "casks": [
-        "github"
+        "logi-options+",
+        "caffeine"
       ],
-      "mas": [
-        "GarageBand::682658836",
-        "Goodnotes::1444383602",
-        "iMovie::408981434",
-        "Keynote::409183694",
-        "Microsoft OneNote::784801555",
-        "Microsoft Outlook::985367838",
-        "Noir::1592917505",
-        "Numbers::409203825",
-        "Pages::409201541",
-        "Windows App::1295203466"
-      ]
+      "mas": [],
+      "taps": []
     }
   },
-  "machines": {
-    "OSXLT3QF7WY": [
-      "core",
-      "dev",
-      "mac-utils",
-      "OSXLT3QF7WY"
-    ]
-  }
+  "version": "1.0"
 }
