@@ -1,15 +1,12 @@
 unfocused-split-opacity = 0.975
 
 # theme = 0x96f
-# theme = dark:0x96f,light:Monokai Pro
-# theme = dark:GitHub-Dark-Default, light:GitHub-Light-Default
-# theme = GitHub-Dark-Default
-theme = carbonfox
-theme = catppuccin-macchiato
+theme = Ayu
+theme = Catppuccin Macchiato
+theme = Builtin Pastel Dark
+theme = dark:Github Dark Default, light:Github Light Default
 
-font-family = "Anonymous Pro"
 font-family = "Monaspace Neon"
-font-size = 16
-adjust-cell-height = "40%"
+font-size = 12
 
-window-padding-x = 8
+# window-padding-x = 8
