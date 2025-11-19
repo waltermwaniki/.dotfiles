@@ -1,0 +1,90 @@
+# Debug logs (npm, yarn)
+
+*.log
+
+# Editor artifacts
+
+.*.sw[a-z]
+*~
+.#*
+.vscode
+
+# OS files
+
+Thumbs.db
+
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+# Local History for Visual Studio Code
+
+.history/
+*.app
+.snapshots/*
+
+.hintrc
+
+# General
+
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Icon must end with two \r
+
+Icon
+
+# Thumbnails
+
+._*
+
+# Files that might appear in the root of a volume
+
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Directories potentially created on remote AFP share
+
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+## User settings
+
+xcuserdata/
+
+## Xcode 8 and earlier
+
+*.xcscmblueprint
+*.xccheckout
+
+# debug
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# local env files
+
+*.env*.local
+*.env
+
+# vercel
+
+*.vercel
+
+# typescript
+
+*.tsbuildinfo
+*next-env.d.ts

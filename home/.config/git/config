@@ -1,0 +1,35 @@
+[user]
+    name = Walter Mwaniki
+    email = walter.g.mwaniki@gmail.com
+[core]
+    compression = 9
+    whitespace = error
+    preloadindex = true
+
+[init]
+    defaultBranch = main
+
+[status]
+    branch = true
+    showStash = true
+    showUntrackedFiles = all
+
+[diff]
+    context = 3
+    renames = copies
+    interhunkcontext = 10
+
+[filter "lfs"]
+	clean = git-lfs clean -- %f
+	smudge = git-lfs smudge -- %f
+	process = git-lfs filter-process
+	required = true
+
+[url "git@github.com:"]
+    insteadOf = "gh:"
+
+[url "git@github.com:waltermwaniki/"]
+    insteadOf = "wm:"
+
+[url "git@github.com:AllenNeuralDynamics/"]
+    insteadOf = "aind:"
