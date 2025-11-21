@@ -1,0 +1,146 @@
+// Zed settings
+//
+// For information on how to configure Zed, see the Zed
+// documentation: https://zed.dev/docs/configuring-zed
+//
+// To see all of Zed's default settings without changing your
+// custom settings, run `zed: open default settings` from the
+// command palette (cmd-shift-p / ctrl-shift-p)
+{
+  "edit_predictions": {
+    "mode": "subtle"
+  },
+  "features": {
+    "edit_prediction_provider": "zed"
+  },
+  "ssh_connections": [
+    {
+      "host": "exaspim2-1",
+      "args": [],
+      "projects": [
+        {
+          "paths": [
+            "/home/localadmin/Projects/ome-zarr-writer"
+          ]
+        }
+      ]
+    }
+  ],
+  "agent": {
+    "default_model": {
+      "provider": "copilot_chat",
+      "model": "claude-sonnet-4.5"
+    },
+    "inline_assistant_model": {
+      "provider": "copilot_chat",
+      "model": "claude-sonnet-4.5"
+    },
+    "default_profile": "write",
+    "always_allow_tool_actions": true,
+    "model_parameters": []
+  },
+  "file_scan_exclusions": [
+    "**/.git",
+    "**/.svn",
+    "**/.hg",
+    "**/.jj",
+    "**/.repo",
+    "**/CVS",
+    "**/.DS_Store",
+    "**/Thumbs.db",
+    "**/.classpath",
+    "**/.settings",
+    "**/.venv",
+    "**/__pycache__"
+  ],
+  "lsp": {
+    "ruff": {},
+    "basedpyright": {
+      "settings": {
+        "python.analysis": {
+          "typeCheckingMode": "standard",
+          "diagnosticMode": "workspace",
+          "inlayHints": {
+            "variableTypes": false,
+            "callArgumentNames": false
+          }
+        }
+      }
+    },
+    "ty": {
+      "settings": {
+        "diagnosticMode": "workspace",
+        "experimental": {
+          "rename": true,
+          "autoImport": true
+        }
+      }
+    }
+  },
+  "inlay_hints": {
+    "enabled": true,
+    "show_value_hints": true,
+    "show_type_hints": true,
+    "show_parameter_hints": true,
+    "show_other_hints": true,
+    "show_background": false,
+    "edit_debounce_ms": 700,
+    "scroll_debounce_ms": 50,
+    "toggle_on_modifiers_press": {
+      "control": false,
+      "alt": false,
+      "shift": false,
+      "platform": false,
+      "function": false
+    }
+  },
+  "git": {
+    "inline_blame": {
+      "enabled": true,
+      "delay_ms": 0,
+      "padding": 7,
+      "min_column": 0,
+      "show_commit_summary": false
+    }
+  },
+  "terminal": {
+    "line_height": {
+      "custom": 1.5
+    },
+    "font_size": 13.0
+  },
+  "preview_tabs": {
+    "enabled": false
+  },
+  "base_keymap": "VSCode",
+  "auto_indent_on_paste": true,
+  "linked_edits": true,
+  "use_on_type_format": true,
+  "ensure_final_newline_on_save": true,
+  "indent_guides": {
+    "enabled": false,
+    "line_width": 0,
+    "active_line_width": 0,
+    "coloring": "fixed",
+    "background_coloring": "disabled"
+  },
+  "wrap_guides": [120],
+  "project_panel": {
+    "show_diagnostics": null
+  },
+  "minimap": {
+    "show": "never"
+  },
+  "hover_popover_delay": 1500,
+  "hover_popover_enabled": true,
+  "current_line_highlight": "gutter",
+  "autosave": "on_focus_change",
+  "icon_theme": "Zed (Default)",
+  "ui_font_size": 16,
+  "buffer_font_size": 12.0,
+  "theme": {
+    "mode": "system",
+    "light": "One Light",
+    "dark": "Ayu Dark"
+  }
+}

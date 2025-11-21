@@ -1,9 +1,38 @@
 {
   "machines": {
-    "OSXLT3QF7WY": ["core", "dev", "mac-utils", "OSXLT3QF7WY"],
-    "walters-mbp": ["core", "dev", "mac-utils"]
+    "OSXLT3QF7WY": [
+      "core",
+      "dev",
+      "mac-utils",
+      "OSXLT3QF7WY"
+    ],
+    "OSXLT9RMYPF": [
+      "core",
+      "dev",
+      "mac-utils"
+    ],
+    "walters-mbp": [
+      "core",
+      "dev",
+      "mac-utils"
+    ]
   },
   "packages": {
+    "OSXLT3QF7WY": {
+      "brews": [
+        "libusb",
+        "xz"
+      ],
+      "casks": [
+        "github"
+      ],
+      "mas": [
+        "Goodnotes::1444383602",
+        "Microsoft Outlook::985367838",
+        "Windows App::1295203466"
+      ],
+      "taps": []
+    },
     "core": {
       "brews": [
         "stow",
@@ -18,50 +47,83 @@
         "fd",
         "fzf",
         "ripgrep",
-        "tree"
+        "tree",
+        "tmux",
+        "gemini-cli"
       ],
       "casks": [
         "google-chrome",
         "obsidian",
         "font-monaspace",
         "ghostty",
-        "figma"
+        "figma",
+        "chatgpt",
+        "github",
+        "rustdesk",
+        "scroll-reverser",
+        "warp"
       ],
-      "mas": [],
-      "taps": ["homebrew/autoupdate", "waltermwaniki/brewfile"]
-    },
-    "OSXLT3QF7WY": {
-      "brews": ["libusb", "xz"],
-      "casks": ["github"],
       "mas": [
-        "Goodnotes::1444383602",
-        "Microsoft Outlook::985367838",
-        "Windows App::1295203466"
+        "Color Picker",
+        "GarageBand",
+        "Goodnotes",
+        "iMovie",
+        "Keynote",
+        "Microsoft OneNote",
+        "Microsoft Outlook",
+        "Noir",
+        "Numbers",
+        "Pages",
+        "Pixelmator Pro",
+        "Windows App"
       ],
-      "taps": []
+      "taps": [
+        "homebrew/autoupdate",
+        "waltermwaniki/brewfile"
+      ]
     },
     "dev": {
-      "brews": ["uv", "node", "pnpm", "gh", "neovim"],
-      "casks": ["zed", "visual-studio-code"],
+      "brews": [
+        "uv",
+        "node",
+        "pnpm",
+        "gh",
+        "neovim"
+      ],
+      "casks": [
+        "zed",
+        "visual-studio-code"
+      ],
       "mas": [],
       "taps": []
     },
     "extras": {
-      "brews": ["libusb", "xz"],
+      "brews": [
+        "libusb",
+        "xz"
+      ],
       "casks": [],
+      "mas": [],
       "taps": []
     },
     "gaming": {
       "brews": [],
-      "casks": ["epic-games", "steam"],
+      "casks": [
+        "epic-games",
+        "steam"
+      ],
       "mas": [],
       "taps": []
     },
     "mac-utils": {
       "brews": [],
-      "casks": ["logi-options+", "caffeine"],
+      "casks": [
+        "logi-options+",
+        "caffeine"
+      ],
       "mas": [],
       "taps": []
     }
-  }
+  },
+  "version": "1.0"
 }

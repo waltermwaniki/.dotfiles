@@ -1,67 +1,68 @@
 # Dotfiles (GNU Stow)
 
-This repository manages dotfiles using **GNU Stow**. Instead of multiple top-level package directories, all your dotfiles are organized under a single `home/` package that mirrors the `$HOME` directory structure.
+This repository manages dotfiles using **GNU Stow** via the `dotty` tool. All your dotfiles are organized under a single `home/` package that mirrors the `$HOME` directory structure.
 
-## Quick start
+## Quick Start
 
-Run `bootstrap.sh -h` for help.
+### 1. Clone the repository
+```bash
+git clone https://github.com/waltermwaniki/dotfiles.git ~/.dotfiles
+cd ~/.dotfiles
+```
+
+### 2. Install Dotty
+Installs the `dotty` CLI to `~/.local/bin/dotty` and ensures `stow` is installed.
 
 ```bash
-# Clone the repository
-git clone <your-repo-url> "$HOME/.dotfiles"
-cd "$HOME/.dotfiles"
+./dotty install
+```
 
-# Run the bootstrap script to install stow (if needed) and set up your dotfiles
+### 3. Sync Dotfiles
+Applies your dotfiles to `$HOME`.
+
+```bash
+dotty sync
+```
+
+## Dotty CLI
+
+`dotty` is a simple wrapper around GNU Stow that handles cross-platform installation and management.
+
+- **`dotty status`**: Check status of dotfiles (conflicts, broken links).
+- **`dotty sync`**: Apply dotfiles. Use `--force` to adopt existing files (overwrite repo with local).
+- **`dotty clean`**: Remove all dotfiles symlinks.
+- **`dotty install`**: Install `dotty` to PATH and install `stow` if missing.
+
+## System Setup (Bootstrap)
+
+For system-wide setup (Homebrew, Brewfile, etc.), use the bootstrap script:
+
+```bash
 ./bootstrap.sh
 ```
 
-The bootstrap script runs the following commands internally:
+This script manages:
+- Homebrew installation (macOS)
+- Brewfile bundle installation (macOS)
+- Core CLI tools installation (Linux)
+- Dotty setup
 
-```bash
-# Preview what will be linked (no changes)
-stow -nv -t "$HOME" home
+## OS Support
 
-# Apply (create symlinks in $HOME)
-stow -v -t "$HOME" home
+`dotty` automatically installs `stow` on:
+- **macOS** (via Homebrew)
+- **Ubuntu/Debian** (via apt)
+- **Rocky/RHEL** (via dnf/EPEL)
+- **Windows** (via **WSL** only)
 
-# Re-stow after edits
-stow -Rvt "$HOME" home
-```
-
-> Tip: If you already have dotfiles in `$HOME`, consider backing them up first.
-> `stow --adopt` can move existing files into this repo (be careful and commit often).
+> **Windows Users**: Please use [WSL (Windows Subsystem for Linux)](https://learn.microsoft.com/en-us/windows/wsl/install). Native Windows is not supported.
 
 ## Layout
 
 ```txt
 .dotfiles/
 ├─ home/              # mirrors your $HOME directory structure
-├─ bootstrap.sh       # optional one-shot setup helper
+├─ dotty              # dotfiles management tool
+├─ bootstrap.sh       # system setup orchestrator
 └─ .gitignore
-```
-
-### Notes
-
-- The directory tree inside `home/` should mirror your home directory.
-  For example, `home/.config/nvim/init.lua` becomes `~/.config/nvim/init.lua`.
-- You can use overlays like `home-macos/` or `home-linux/` for host- or OS-specific tweaks.
-- Secrets: keep them **out** of git or use tools like `git-crypt` or `age`.
-- See the `Makefile` for additional convenience commands.
-
-## Installing GNU Stow manually
-
-If you prefer to install GNU Stow manually, use the following commands for your OS:
-
-```bash
-# Debian/Ubuntu
-sudo apt-get update && sudo apt-get install -y stow
-
-# Fedora/RHEL/CentOS/Rocky
-sudo dnf install -y stow
-
-# Arch
-sudo pacman -S stow
-
-# macOS (Homebrew)
-brew install stow
 ```

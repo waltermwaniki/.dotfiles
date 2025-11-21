@@ -71,3 +71,6 @@ command -v zoxide >/dev/null 2>&1 && eval "$(zoxide init --cmd cd zsh)"
 
 # Initialize Starship prompt
 command -v starship >/dev/null 2>&1 && eval "$(starship init zsh)"
+
+# Added by Antigravity
+export PATH="/Users/walter.mwaniki/.antigravity/antigravity/bin:$PATH"
