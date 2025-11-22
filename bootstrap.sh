@@ -165,6 +165,26 @@ setup_linux() {
     install_linux_packages
     install_extra_tools
 
+    # Install Catppuccin GNOME Terminal theme (Mocha) if gnome-terminal present
+    if command -v gnome-terminal >/dev/null 2>&1; then
+        say "Installing Catppuccin GNOME Terminal theme..."
+        # Avoid reclone if already exists
+        if [ ! -d "$HOME/.catppuccin/gnome-terminal" ]; then
+            git clone https://github.com/catppuccin/gnome-terminal.git "$HOME/.catppuccin/gnome-terminal" || warn "Failed to clone Catppuccin GNOME Terminal repo"
+        else
+            success "Catppuccin GNOME Terminal repo already present"
+        fi
+        if [ -d "$HOME/.catppuccin/gnome-terminal" ]; then
+            (
+                cd "$HOME/.catppuccin/gnome-terminal" && {
+                    python3 ./install.py || ./install.py || warn "Catppuccin install script failed"
+                }
+            )
+        fi
+    else
+        warn "gnome-terminal not found; skipping Catppuccin GNOME Terminal theme installation"
+    fi
+
     # Install TPM
     install_tpm
 

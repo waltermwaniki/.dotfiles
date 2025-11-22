@@ -21,7 +21,7 @@ if command -v fzf >/dev/null 2>&1; then
     source ~/.fzf.bash
   elif command -v brew >/dev/null 2>&1; then
     # Try to source from brew installation
-    local brew_prefix="$(brew --prefix)"
+    brew_prefix="$(brew --prefix)"
     [ -f "$brew_prefix/opt/fzf/shell/key-bindings.bash" ] && source "$brew_prefix/opt/fzf/shell/key-bindings.bash"
     [ -f "$brew_prefix/opt/fzf/shell/completion.bash" ] && source "$brew_prefix/opt/fzf/shell/completion.bash"
   fi
@@ -36,8 +36,15 @@ if command -v fzf >/dev/null 2>&1; then
   fi
 fi
 
-# Load zoxide if available (bash version)
-command -v zoxide >/dev/null 2>&1 && eval "$(zoxide init --cmd cd bash)"
+[ -f "$HOME/.local/bin/env" ] && . "$HOME/.local/bin/env"
+
+# pnpm
+export PNPM_HOME="/home/localadmin/.local/share/pnpm"
+case ":$PATH:" in
+  *":$PNPM_HOME:"*) ;;
+  *) export PATH="$PNPM_HOME:$PATH" ;;
+esac
+# pnpm end
 
 # Load completion systems for dev tools
 command -v gh >/dev/null 2>&1 && eval "$(gh completion --shell bash)"
@@ -45,3 +52,7 @@ command -v pnpm >/dev/null 2>&1 && source <(pnpm completion bash)
 
 # Initialize Starship prompt
 command -v starship >/dev/null 2>&1 && eval "$(starship init bash)"
+
+
+# Load zoxide if available (bash version) – keep last for PROMPT_COMMAND safety
+command -v zoxide >/dev/null 2>&1 && eval "$(zoxide init --cmd cd bash)"
